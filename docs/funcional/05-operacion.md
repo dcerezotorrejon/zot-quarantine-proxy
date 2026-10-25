@@ -1,0 +1,139 @@
+# 05 · Operación
+
+Esta guía es para quien mantiene el servidor: configuración, logs, datos y tareas
+periódicas.
+
+## Variables de configuración
+
+Se definen en los quadlets de `~/.config/containers/systemd/`.
+
+### Proxy (`proxy.container`)
+
+| Variable | Por defecto | Qué controla |
+|---|---|---|
+| `ZOT_URL` | `http://zot:5000` | Dirección interna de Zot. No cambiar salvo que cambies el nombre del contenedor. |
+| `UPSTREAM_REGISTRIES` | `docker.io,ghcr.io,quay.io,registry.k8s.io` | Registros que se permiten. Cualquier otro devuelve `DENIED`. |
+| `LOG_LEVEL` | `INFO` | Detalle de los logs: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
+
+### Updater (`updater.container`)
+
+| Variable | Por defecto | Qué controla |
+|---|---|---|
+| `QUARANTINE_DAYS` | `7` | Días mínimos en cuarentena antes de promover. |
+| `CVE_SEVERITY_THRESHOLD` | `HIGH,CRITICAL` | Severidades que impiden la promoción. Lista separada por comas. |
+| `CHECK_INTERVAL` | `6h` | Frecuencia del ciclo. Formatos: `30m`, `6h`, `7d`. |
+| `LOG_LEVEL` | `INFO` | Detalle de los logs. |
+
+Después de cambiar una variable:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart proxy.service updater.service
+```
+
+## Ver el estado
+
+```bash
+# Contenedores del pod
+podman ps --pod
+
+# Logs del proxy en vivo
+journalctl --user -u proxy.service -f
+
+# Logs del updater en vivo
+journalctl --user -u updater.service -f
+
+# Tags verificados de una imagen
+curl -s http://localhost:5000/v2/verified/docker.io/library/nginx/tags/list
+
+# Tags en cuarentena de una imagen
+curl -s http://localhost:5000/v2/quarantine/docker.io/library/nginx/tags/list
+```
+
+## Qué significan los mensajes del updater
+
+| Mensaje | Significado | Qué hacer |
+|---|---|---|
+| `Nueva versión detectada para …` | Se ha encontrado una versión nueva y se descarga a cuarentena. | Nada. |
+| `Escaneo pendiente para …` | Zot aún no tiene el resultado de CVEs. | Nada. Se reintenta. |
+| `Eliminada … al terminar la cuarentena por CVEs: …` | Al cumplir el plazo tenía CVEs bloqueantes. Se ha borrado de la cuarentena. | Revisar los IDs. Ver [04](04-cuarentena-y-promocion.md#qué-pasa-con-una-imagen-vulnerable). |
+| `Promovida … a verified` | Se ha promocionado correctamente. | Nada. |
+| `Purgado … ya no está publicado` | El upstream retiró ese tag. | Nada. |
+| `Retirada versión antigua …` | Se ha borrado una versión que nadie pide. | Nada. |
+| `Paquete … eliminado de la base de datos` | El paquete ya no tiene imágenes. | Nada. |
+| `El paso '…' falló` | Un paso del ciclo ha dado error. El resto sigue. | Ver el traceback en el log y buscar la causa. |
+
+Un error repetido en `sincronizar upstream` suele indicar que el registro
+upstream no responde, o que las credenciales o la red han cambiado.
+
+## Datos y dónde están
+
+| Qué | Dónde | Notas |
+|---|---|---|
+| Imágenes (verificadas y cuarentena) | `~/zot-data/` | Puede ocupar varios GB. La base de datos de Trivy también está aquí. |
+| Base de datos de estado | `~/proxy-data/state.sqlite3` | Lista de refs pedidas y entradas de cuarentena. |
+
+### Copia de seguridad
+
+La base de datos de estado es pequeña. Para copiarla sin riesgo, para primero
+los servicios que la escriben:
+
+```bash
+systemctl --user stop proxy.service updater.service
+cp ~/proxy-data/state.sqlite3 ~/backup/state-$(date +%F).sqlite3
+systemctl --user start proxy.service updater.service
+```
+
+Las imágenes en `~/zot-data/` se pueden reconstruir: si se pierden, el sistema
+vuelve a descargarlas cuando se pidan. Sin embargo, se pierden las versiones
+verificadas y el plazo de cuarentena vuelve a contar desde cero.
+
+### Vaciar la caché
+
+Para empezar de cero, para los servicios y borra los datos. Esto **borra todas
+las imágenes** y el estado:
+
+```bash
+systemctl --user stop proxy.service updater.service zot.service
+rm -rf ~/zot-data/* ~/proxy-data/*
+systemctl --user start zot.service proxy.service updater.service
+```
+
+## Seguridad de acceso
+
+Ni el proxy ni Zot piden usuario ni contraseña. Cualquiera que llegue a los
+puertos puede descargar imágenes.
+
+| Puerto | Qué expone | Riesgo si está abierto a internet |
+|---|---|---|
+| `5001` (proxy) | Solo las imágenes que pasan por el proxy, con las reglas de versiones. | Medio: cualquiera puede consumir la caché. |
+| `5000` (Zot) | El almacén completo, incluidas las imágenes **en cuarentena**, sin reglas. | Alto: se pueden descargar imágenes sin el filtro del proxy. |
+
+Recomendaciones:
+
+- No abras `5000` a internet. Si no lo necesitas desde fuera, ciérralo en el
+  firewall.
+- Si expones el proxy fuera de la red de casa, ponlo detrás de un reverse proxy
+  con HTTPS y restringe el acceso.
+
+## Tareas periódicas
+
+| Tarea | Frecuencia | Cómo |
+|---|---|---|
+| Revisar imágenes eliminadas por CVEs | Semanal | `journalctl --user -u updater.service --since "7 days ago" \| grep -i "eliminada"` |
+| Comprobar espacio en disco | Mensual | `du -sh ~/zot-data ~/proxy-data` |
+| Copia de seguridad del estado | Mensual | Ver [copia de seguridad](#copia-de-seguridad). |
+| Actualizar el sistema | Cuando haya versión nueva | Ver [INSTALL.md, sección Actualizar](../../INSTALL.md#actualizar). |
+
+## Parar y arrancar
+
+```bash
+# Parar todo
+systemctl --user stop proxy.service updater.service zot.service
+
+# Arrancar todo
+systemctl --user start zot.service proxy.service updater.service
+
+# Estado
+systemctl --user status proxy.service updater.service zot.service --no-pager
+```
