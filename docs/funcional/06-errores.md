@@ -9,9 +9,8 @@ y Docker muestran el mensaje tal cual. Esta tabla explica cada código y qué ha
 |---|---|---|---|
 | 400 | `NAME_INVALID` | El nombre tiene formato incorrecto: barras dobles, barra final o vacío. | Revisar la ruta de la imagen. |
 | 403 | `DENIED` | El registro de origen no está en `UPSTREAM_REGISTRIES`. | Añadir el registro a la lista, o usar otro. |
-| 404 | `MANIFEST_UNKNOWN` | No existe ningún tag que cumpla la petición (parcial o flotante), o el digest no está en el almacén. | Comprobar que el tag existe en el registro original. |
-| 404 | `BLOB_UNKNOWN` | Un blob pedido no existe en ninguno de los dos namespaces. | Suele ser una descarga cortada. Repetir el `pull`. |
-| 502 | `UNKNOWN` | Falló la consulta de tags del upstream (`skopeo list-tags`) al resolver un tag flotante o parcial. | Ver el mensaje de skopeo en el log del proxy. |
+| 404 | `MANIFEST_UNKNOWN` | No existe ningún tag que cumpla la petición (parcial o flotante). | Comprobar que el tag existe en el registro original. |
+| 502 | `UNKNOWN` | Falló la consulta de tags del upstream (`skopeo list-tags`) al resolver un tag flotante o parcial, o falló el token anónimo del upstream. | Ver el mensaje en el log del proxy. |
 | 503 | `UNAVAILABLE` | El proxy no puede hablar con Zot. | Comprobar que Zot está en marcha. |
 | 500 | (sin código OCI) | Error interno no contemplado. | Ver el traceback en el log del proxy. |
 
@@ -23,18 +22,11 @@ Si pides un tag **parcial o flotante** y el upstream no tiene ninguno que cumpla
 el error es `MANIFEST_UNKNOWN`. Revisa el tipo de tag en
 [03 · Tags y versiones](03-tags-y-versiones.md).
 
-### "unknown" (502) al pedir una versión exacta
+### "manifest unknown" al pedir una versión exacta
 
-Si pides un tag **exacto** que no existe en el upstream, el proxy no lo comprueba
-antes: se lo pide a Zot, que intenta la descarga bajo demanda y falla. El error que
-recibe el cliente lo devuelve Zot, y puede no coincidir con `MANIFEST_UNKNOWN`.
-Este comportamiento está pendiente de comprobar con un Zot real.
-
-Para revisar el motivo, mira el log de Zot:
-
-```bash
-journalctl --user -u zot.service --since "10 min ago"
-```
+Si pides un tag **exacto** que no existe en el upstream, el proxy lo reenvía al
+registro público y este responde `404 MANIFEST_UNKNOWN` (o su equivalente), que se
+reenvía tal cual al cliente. El mensaje exacto depende del upstream.
 
 ### "denied" al pedir una imagen
 
@@ -43,8 +35,8 @@ El registro no está permitido. Mira `UPSTREAM_REGISTRIES` en
 
 ### La primera descarga tarda mucho
 
-Es normal. La primera descarga de cada imagen baja todas las capas desde el
-upstream. Las siguientes salen de la caché local.
+Es normal. Cada imagen que no está en `verified` se sirve desde el upstream. Una
+vez promovida a `verified`, las siguientes salen de local.
 
 ### El cliente no conecta
 

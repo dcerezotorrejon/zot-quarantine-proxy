@@ -29,14 +29,14 @@ Una imagen puede estar en uno de estos estados dentro del almacén:
 
 | Estado | Dónde está | Qué significa |
 |---|---|---|
-| **Cuarentena** | `quarantine/` | Descargada, pero aún no ha cumplido el plazo ni el escaneo. Se sirve como caché. |
+| **Cuarentena** | `quarantine/` | Descargada, pero aún no ha cumplido el plazo ni el escaneo. No se sirve: espera a promoverse o retirarse. |
 | **Verificada** | `verified/` | Ha cumplido el plazo y el escaneo sin CVEs bloqueantes. Es la versión de referencia. |
 | **Ausente** | ninguno | No se ha pedido nunca, o ya se retiró. |
 
-> **Importante:** una imagen en cuarentena **se sirve a los clientes** igual que
-> una verificada. El estado de cuarentena no bloquea la descarga. Lo que hace es
-> marcar que la imagen aún no es la versión de referencia. Ver
-> [04 · Cuarentena y promoción](04-cuarentena-y-promocion.md#qué-pasa-con-una-imagen-vulnerable).
+> **Importante:** solo se sirve desde local lo que está en `verified`. Lo que no
+> está verificado se sirve directamente del registro público y, en segundo plano,
+> se copia a `quarantine` para escanearlo. Ver
+> [04 · Cuarentena y promoción](04-cuarentena-y-promocion.md).
 
 ## Flujo de una descarga
 
@@ -44,13 +44,13 @@ Una imagen puede estar en uno de estos estados dentro del almacén:
 podman pull <servidor>:5001/docker.io/library/nginx:1.27
         │
         ▼
-¿Hay una versión verificada que cumpla 1.27?  ──sí──► se sirve (verificada)
+¿Hay una versión verificada que cumpla 1.27?  ──sí──► se sirve desde verified/
         │ no
         ▼
-¿Hay una versión en cuarentena que cumpla 1.27? ──sí──► se sirve (cuarentena)
-        │ no
+se sirve desde el registro público (upstream)
+        │
         ▼
-Zot la descarga del upstream a cuarentena y la sirve en streaming mientras la recibe
+en segundo plano, se copia a quarantine/ (si no está ya) para escanearla
 ```
 
 Las reglas de qué versión cumple cada petición están en
@@ -60,14 +60,14 @@ Las reglas de qué versión cumple cada petición están en
 
 ### Caso 1 · Primera descarga de una imagen
 
-Un equipo pide `nginx:1.27` por primera vez. El sistema la descarga a cuarentena,
-la sirve de inmediato y la deja allí hasta cumplir el plazo. Después, el updater
-la promociona a `verified/` si el escaneo está limpio.
+Un equipo pide `nginx:1.27` por primera vez. El proxy la sirve del registro
+público y, en segundo plano, la copia a `quarantine/`. Al cumplir el plazo y con
+escaneo limpio, el updater la promociona a `verified/`.
 
 ### Caso 2 · Descarga posterior
 
-Otra máquina pide `nginx:1.27`. El sistema responde desde la caché sin volver a
-descargar nada.
+Otra máquina pide `nginx:1.27`. Si ya se promovió, se sirve desde `verified/`; si
+todavía está en cuarentena, se sirve de nuevo del upstream.
 
 ### Caso 3 · Aparece una versión nueva
 
@@ -91,7 +91,7 @@ updater lo borra de su base de datos de estado.
   descargar. Ver [05 · Operación](05-operacion.md#seguridad-de-acceso).
 - **No escanea en el momento de la descarga.** El escaneo se hace en segundo plano
   y puede tardar hasta unos 15 minutos en tener resultado.
-- **No descarga por digest.** Un digest solo se sirve si la imagen ya está en el
-  almacén.
+- **No cuarentena los digests.** Un digest que no está verificado se sirve del
+  upstream, pero al no tener tag no pasa por cuarentena ni se promueve.
 - **No soporta registros privados** con credenciales. Solo registros públicos o
   de acceso anónimo.

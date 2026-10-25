@@ -13,6 +13,7 @@ Se definen en los quadlets de `~/.config/containers/systemd/`.
 |---|---|---|
 | `ZOT_URL` | `http://zot:5000` | Dirección interna de Zot. No cambiar salvo que cambies el nombre del contenedor. |
 | `UPSTREAM_REGISTRIES` | `docker.io,ghcr.io,quay.io,registry.k8s.io` | Registros que se permiten. Cualquier otro devuelve `DENIED`. |
+| `SKOPEO_MULTI_ARCH` | `system` | Plataformas que copia skopeo: `system` (solo la del servidor), `all` o `index-only`. |
 | `LOG_LEVEL` | `INFO` | Detalle de los logs: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 
 ### Updater (`updater.container`)

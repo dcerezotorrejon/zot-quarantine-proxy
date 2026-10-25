@@ -37,9 +37,9 @@ Un tag con sufijo, como `1.27.4-alpine`, es una variante distinta de la versión
 
 ## Digests
 
-Un pedido por digest (`nginx@sha256:…`) se sirve solo si ese contenido ya está en
-el almacén, en `verified/` o en `quarantine/`. Si no está, el sistema no lo
-descarga, porque el digest no indica qué tag descargar.
+Un pedido por digest (`nginx@sha256:…`) se sirve de `verified/` si ese contenido
+ya está allí; si no, se sirve del upstream. Al no tener tag, el digest no se copia
+a cuarentena ni se promueve.
 
 ## Tags que no son versiones
 

@@ -9,8 +9,15 @@ hasta que pasa a `verified/`, o hasta que se retira.
           pedido por un cliente
                   │
                   ▼
+        ¿está en verified/?  ──sí──► se sirve desde verified/
+                  │ no
+                  ▼
+        se sirve del upstream; en segundo plano
+        se copia a quarantine/ (si no está ya)
+                  │
+                  ▼
         ┌──────────────────┐
-        │   CUARENTENA     │  se sirve como caché
+        │   CUARENTENA     │  en espera (no se sirve)
         │  (quarantine/)   │
         └────────┬─────────┘
                  │ pasan QUARANTINE_DAYS (7 por defecto)
@@ -36,10 +43,11 @@ hasta que pasa a `verified/`, o hasta que se retira.
 El updater ejecuta un ciclo al arrancar y después cada **6 horas**
 (`CHECK_INTERVAL`). Cada ciclo hace cuatro cosas en este orden:
 
-1. **Buscar versiones nuevas** de los paquetes pedidos y descargarlas a cuarentena.
-2. **Promover** las imágenes que cumplen el plazo y el escaneo.
-3. **Actualizar alias y retención** (`latest`, `1.27`… y las versiones que se borran).
-4. **Limpiar** de la base de datos los paquetes que ya no tienen imágenes.
+1. **Limpiar** la base de datos: borra los paquetes sin imágenes y las refs o
+   cuarentenas cuyo tag ya no está en Zot.
+2. **Buscar versiones nuevas** de los paquetes pedidos y descargarlas a cuarentena.
+3. **Promover** las imágenes que cumplen el plazo y el escaneo.
+4. **Actualizar alias y retención** (`latest`, `1.27`… y las versiones que se borran).
 
 Si un paso falla, el ciclo registra el error y sigue con el siguiente. Los
 errores aparecen en los logs del updater.
@@ -68,13 +76,13 @@ Si una imagen tiene CVEs bloqueantes **cuando se cumple el plazo de cuarentena**
 el updater la **elimina**. Deja de estar disponible en el almacén y no se
 promueve.
 
-Antes de cumplir el plazo, una imagen vulnerable sigue en cuarentena y se sirve
-como caché. Es decir, durante esos días un cliente puede descargarla aunque tenga
-CVEs. El escaneo solo decide al final del plazo.
+Antes de cumplir el plazo, una imagen vulnerable sigue en cuarentena (sin
+servirse). El escaneo solo decide al final del plazo: si tiene CVEs bloqueantes,
+se elimina de la cuarentena.
 
-Si un cliente vuelve a pedir la misma imagen después de eliminarla, el proxy la
-descarga otra vez a cuarentena y empieza un nuevo plazo. Si sigue siendo
-vulnerable, se volverá a eliminar al cumplir el plazo.
+Si un cliente vuelve a pedir la misma imagen, el proxy la sirve del upstream y, en
+segundo plano, la copia otra vez a cuarentena, empezando un nuevo plazo. Si sigue
+siendo vulnerable, se volverá a eliminar al cumplir el plazo.
 
 ## Imágenes con escaneo pendiente
 
@@ -91,8 +99,8 @@ Cuando una imagen cumple las tres condiciones, el updater:
 2. Borra la copia de `quarantine/`.
 3. La quita del registro de cuarentena.
 
-Mientras se promueve, la imagen puede servirse desde cualquiera de los dos
-namespaces. Por eso el proxy busca primero en `verified/`.
+Durante la promoción, la imagen sigue en `quarantine/` sin servirse; pasa a
+servirse desde `verified/` cuando termina la copia.
 
 ## Qué se conserva
 

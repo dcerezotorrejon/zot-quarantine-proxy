@@ -13,7 +13,7 @@ Se despliega con Podman rootless y quadlets.
 
 | Tema | Decisión |
 |---|---|
-| Primera petición (on-demand) | Se descarga a `quarantine` y se sirve desde ahí de inmediato (caché). |
+| Primera petición | Si no está en `verified`, se sirve del upstream y se copia a `quarantine` en segundo plano. |
 | Escaneo | `zli` + Trivy embebido en Zot. Sin servidor ni binario Trivy aparte. |
 | Imagen de Zot | `ghcr.io/project-zot/zot:latest` (full). No `zot-minimal`: no trae search ni CVEs. |
 | Namespaces | Dos namespaces en un único Zot: `verified` y `quarantine`. |
@@ -28,8 +28,8 @@ clientes (docker/podman pull)
         │  <servidor>:5001
         ▼
 ┌──────────── pod zot-quarantine-proxy (red compartida) ────────────┐
-│  [proxy]   :5001 ── reverse proxy OCI ──► [zot]  :5000           │
-│  (resuelve versión; Zot descarga en streaming)                   │
+│  [proxy]   :5001 ── reverse proxy OCI ──► [zot] :5000 (verified) │
+│            └────────────────► registros públicos (upstream)       │
 │  [updater] skopeo + zli ───────────────────► zli cve list        │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -51,12 +51,12 @@ en 5000 y el proxy en 5001. El orden de arranque se controla con `Requires=` y
 ### Zot
 
 - `verified/<registro>/<repo>:<tag>`: lo que se considera seguro.
-- `quarantine/<registro>/<repo>:<tag>`: caché en espera de escaneo y de los días
-  de cuarentena.
+- `quarantine/<registro>/<repo>:<tag>`: en espera de escaneo y de los días de
+  cuarentena. No se sirve a los clientes.
 
 Ejemplo: `docker pull <servidor>:5001/docker.io/library/nginx:1.27` se resuelve
-contra `verified/docker.io/library/nginx`. Si no está, se inserta en
-`quarantine/docker.io/library/nginx` y se sirve desde ahí.
+contra `verified/docker.io/library/nginx`. Si no está, se sirve del registro
+público y, en segundo plano, se copia a `quarantine/docker.io/library/nginx`.
 
 ### SQLite (`state.sqlite3`, compartido por proxy y updater)
 
@@ -80,22 +80,23 @@ Así `nginx` equivale a `docker.io/library/nginx`.
 Reverse proxy que habla la API OCI Distribution. Endpoints:
 
 - `GET /v2/`: responde `200 {}`.
-- `GET|HEAD /v2/<name>/manifests/<ref>`: resuelve la copia a servir y la reenvía.
-- `GET|HEAD /v2/<name>/blobs/<digest>`: busca primero en `verified` y luego en
-  `quarantine`.
+- `GET|HEAD /v2/<name>/manifests/<ref>`: resuelve el origen y reenvía.
+- `GET|HEAD /v2/<name>/blobs/<digest>`: busca primero en `verified` y luego en el
+  upstream.
 - `GET /v2/<name>/tags/list`: lista los tags de `verified`.
 
 Flujo para un manifest:
 
 1. Parsear el nombre. Rechazar si el registro no está en la allowlist
    (`UPSTREAM_REGISTRIES`).
-2. Si es un digest, servirlo solo si ya existe en Zot.
-3. Si es un tag, registrar la ref en SQLite.
-4. Buscar copia local: primero `verified`, después `quarantine`.
-5. Si no hay copia, resolver el tag concreto (con `skopeo list-tags` para flotantes y
-   parciales), registrar la entrada de cuarentena y pedir la imagen a Zot en
-   `quarantine/`. Zot la descarga bajo demanda y la sirve en streaming mientras la
-   recibe. El proxy no descarga ni serializa descargas: lo hace Zot.
+2. Si es un digest, servirlo de `verified` si está; si no, del upstream.
+3. Si es un tag, registrar la ref en SQLite y resolver el tag concreto
+   (con `skopeo list-tags` para flotantes y parciales).
+4. Si hay copia en `verified`, servirla desde ahí.
+5. Si no, servir la imagen del registro público (reenvío con token anónimo) y, en
+   segundo plano, copiarla a `quarantine` si no está ya, para el ciclo de escaneo
+   y promoción. El proxy sirve el cuerpo en streaming desde el origen, sin
+   serializar descargas.
 
 ## 7. Resolución de tags
 
@@ -105,7 +106,7 @@ Flujo para un manifest:
 | Literal no semver | `alpine` | El tag literal. |
 | Parcial | `1`, `1.27` | La mayor versión semver que cumple el prefijo. Sin sufijos. |
 | Flotante | `latest`, `stable` | La versión semver más alta de `verified`. Si no hay semver, el literal. |
-| Digest | `@sha256:…` | Esa imagen, si ya está en Zot. |
+| Digest | `@sha256:…` | Esa imagen, de `verified` si está; si no, del upstream. |
 
 Los parciales y flotantes se resuelven contra `verified` primero.
 
@@ -114,19 +115,21 @@ Los parciales y flotantes se resuelven contra `verified` primero.
 Un ciclo cada `CHECK_INTERVAL` (6h por defecto). Cada paso es un módulo y un
 fallo en uno no detiene los demás.
 
-1. **Sincronizar upstream** (`upstream_sync.py`): para cada ref, detecta la
+1. **Limpieza de estado** (`cleanup.py`): un paquete sin imágenes en `verified`
+   ni en `quarantine` se borra de la base de datos. Si el paquete tiene imágenes,
+   se quitan las entradas de cuarentena y las refs cuyo tag ya no existe en Zot.
+   Va primero para que un paquete borrado de Zot no se re-descargue en el paso 2.
+2. **Sincronizar upstream** (`upstream_sync.py`): para cada ref, detecta la
    versión nueva y la baja a `quarantine`. Quita de `quarantine` los tags que el
    upstream ya no publica.
-2. **Promover** (`promoter.py`): si un tag lleva al menos `QUARANTINE_DAYS` en
+3. **Promover** (`promoter.py`): si un tag lleva al menos `QUARANTINE_DAYS` en
    cuarentena, `zli cve list` no tiene CVEs con severidad en
    `CVE_SEVERITY_THRESHOLD` y lo copia a `verified` y lo quita de `quarantine`.
    Si tiene CVEs bloqueantes, lo borra de `quarantine`. Si el escaneo no está
    listo, espera al siguiente ciclo sin promover ni borrar.
-3. **Alias y retención** (`retention.py`): `latest`, `stable`, `1.27`… apuntan a
+4. **Alias y retención** (`retention.py`): `latest`, `stable`, `1.27`… apuntan a
    la versión que les corresponde. Se podan las versiones semver que ninguna ref
    pide. Nunca se borran tags no semver.
-4. **Limpieza de estado** (`cleanup.py`): un paquete sin imágenes en `verified`
-   ni en `quarantine` se borra de la base de datos.
 
 ## 9. Zot
 
@@ -134,10 +137,9 @@ fallo en uno no detiene los demás.
 actualizada cada 24h) y `storage.gc` con `dedupe`. Zot escucha en el puerto 5000
 dentro del pod.
 
-La extensión `sync` descarga bajo demanda desde cada registro permitido (`docker.io`,
-`ghcr.io`, `quay.io`, `registry.k8s.io`) con `stream: true`. Cada registro guarda sus
-imágenes en `quarantine/<registro>/…`, con `prefix: "**"` y `stripPrefix: true`. Zot
-se fija a la versión `v2.1.22`, que es la documentada para el streaming.
+Zot no usa la extensión `sync`: el reenvío al registro público lo hace el proxy, y la
+copia a `quarantine` la dispara el proxy con `skopeo` en segundo plano. Zot solo
+guarda `verified/` y `quarantine/`.
 
 El escaneo corre en segundo plano cada ~15 min, sin configuración. Por eso un
 tag recién insertado puede no tener resultado de CVEs todavía.
@@ -147,7 +149,7 @@ tag recién insertado puede no tener resultado de CVEs todavía.
 ```
 shared/zqp/        código común: image_ref, versions, state, env,
                    skopeo, zot_api, quarantine
-proxy/app/         FastAPI: main, service, resolver, forwarder, config
+proxy/app/         FastAPI: main, service, resolver, forwarder, upstream, config
 updater/app/       main, upstream_sync, promoter, retention, cleanup,
                    scanner, config
 config/zot/        config.json de Zot
@@ -170,18 +172,31 @@ docs/design.md     este documento
 ## 12. Invariantes
 
 - Nada se sirve desde `verified` si no ha pasado por cuarentena.
+- `quarantine` no se sirve: solo se escanea y se promueve.
 - Un tag exacto se sirve tal cual. No se sustituye por otra versión.
 - Un tag se promueve solo con el tiempo cumplido y sin CVEs bloqueantes.
-- Un digest no se descarga a ciegas: solo se sirve si ya existe.
+- Un digest se sirve de `verified` si está; si no, del upstream (no se cuarentena).
 - La retención solo borra versiones semver que nadie pide.
 
-## 13. Pendiente de validar en Fedora
+## 13. Validación en entorno real
 
-La integración real con Zot, skopeo y zli no se ha probado todavía. Puntos a comprobar:
+Validado en un entorno Linux real (Podman rootless, Zot v2.1.22, Trivy):
 
-- Formato exacto de `zli cve list -f json`. El código espera la clave `CVEList`.
-- Una imagen recién insertada no debe contar como limpia antes de tener resultado
-  de escaneo. Ahora se trata como pendiente si zli falla, pero hay que verificarlo.
+- El proxy sirve de `verified` cuando está, reenvía al upstream (token anónimo y
+  redirect a CDN) cuando no, y copia a `quarantine` en segundo plano con skopeo.
+- Promoción completa: cuarentena → escaneo de Trivy → `verified` (con `zli`).
+- Etiqueta flotante: `latest` se resuelve a la mayor versión verificada, y
+  `upstream_sync` baja la última del upstream para mantenerla al día.
+
+Formato real de `zli cve list -f json` (validado):
+
+| Estado de la imagen | Salida de `zli` | Veredicto |
+|---|---|---|
+| Sin escanear aún | `Error: tag metadata not found for given repo and tag names` (exit ≠ 0) | pendiente |
+| Escaneada, 0 CVEs | `No CVEs found for image` (texto, exit 0) | limpia |
+| Escaneada, con CVEs | JSON `{"Tag":…,"CVEList":[…]}` (exit 0) | según severidades |
+
+Pendiente de comprobar en Fedora (producción):
+
 - `DELETE /v2/<repo>/manifests/<digest>` y el GC automático liberan el espacio.
 - Resolución de `zot`, `proxy` y `updater` dentro del pod (`podman exec updater getent hosts zot`).
-- Dos descargas simultáneas de imágenes grandes se esperan entre sí por el lock.

@@ -9,7 +9,8 @@ basado en Podman rootless, Zot y Python. Lee `README.md` para el uso e
 ```
 shared/zqp/        código común: nombres (image_ref), tags (versions), SQLite (state),
                    skopeo, cliente de la API de Zot (zot_api), cuarentena (quarantine)
-proxy/app/         FastAPI: endpoints OCI, resolución de la copia a servir, reenvío a Zot
+proxy/app/         FastAPI: endpoints OCI, resolución del origen (verified/upstream),
+                   reenvío a Zot y a registros públicos
 updater/app/       ciclo de mantenimiento, un módulo por paso
 config/zot/        config.json de Zot (search + cve; gc habilitado)
 config/containers/ registries inseguros para skopeo (Zot se sirve por HTTP en el pod)
@@ -35,11 +36,13 @@ código manda.
 No cambies estas reglas sin confirmarlo con el usuario:
 
 - **Namespaces en Zot**: `verified/<registro>/<repo>` es lo que se considera
-  seguro; `quarantine/<registro>/<repo>` es caché en espera. Nada se sirve desde
-  `verified` que no haya pasado la cuarentena.
-- **Primera petición**: se descarga a `quarantine` y se sirve desde ahí
-  inmediatamente. Esto es una decisión deliberada del usuario.
-- **Prioridad al servir**: `verified` primero, después `quarantine`.
+  seguro; `quarantine/<registro>/<repo>` es la zona de espera para escanear y
+  promover. Nada se sirve desde `verified` que no haya pasado la cuarentena.
+- **Servir**: solo se sirve desde local lo que está en `verified`. Si no está,
+  se sirve directamente del registro público (upstream) y, en segundo plano, se
+  copia a `quarantine` (si no está ya) para el ciclo de escaneo y promoción.
+  `quarantine` no se sirve a los clientes.
+- **Prioridad al servir**: `verified` primero; si no, el upstream.
 - **Plazo y veredicto**: al cumplir `QUARANTINE_DAYS` (7 por defecto), si
   `zli cve list` no tiene CVEs con severidad en `CVE_SEVERITY_THRESHOLD` la imagen
   se promueve a `verified`; si los tiene, se **elimina** de cuarentena. Si el
@@ -51,7 +54,8 @@ No cambies estas reglas sin confirmarlo con el usuario:
   tags no semver (`alpine`, etc.) ni digests que aún referencia un tag protegido.
 - **Limpieza de estado**: un paquete sin imágenes en `verified` ni en
   `quarantine` se borra de la base de datos.
-- **Digests**: solo se sirven si ya existen en Zot. No se descargan a ciegas.
+- **Digests**: se sirven de `verified` si ya existen; si no, se reenvían al
+  upstream como un tag exacto. Al no tener tag, no se copian a cuarentena.
 
 ## Comandos
 

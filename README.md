@@ -11,11 +11,11 @@ Proxy de imágenes de contenedores (pull-through cache) para homelab, basado en
   `proxy` y `updater`. Se hablan por nombre (`http://zot:5000`).
 - Zot es el almacén OCI y usa dos *namespaces*:
   - `verified/<registro>/<repo>`: lo que se sirve como versión segura.
-  - `quarantine/<registro>/<repo>`: en espera. Se sirve como caché, pero solo
-    se promueve a `verified` tras los días de cuarentena y con escaneo limpio.
+  - `quarantine/<registro>/<repo>`: en espera de escaneo y promoción. No se
+    sirve a los clientes.
 - **proxy** (Python, Fedora minimal) es el endpoint OCI al que apuntan los
-  clientes. Resuelve el tag pedido y, si no hay copia local, pide la imagen a Zot, que
-  la descarga y la sirve en streaming.
+  clientes. Resuelve el tag pedido: si está en `verified`, lo sirve desde ahí; si
+  no, lo sirve del registro público y, en segundo plano, lo copia a `quarantine`.
 - **updater** (Python, Fedora) cada 6 h detecta versiones nuevas, purga lo que
   el upstream retiró, promueve lo que cumple las reglas, mantiene los alias
   (`latest`, `stable`, `1.27`…) y limpia la base de datos de paquetes huérfanos.
@@ -30,11 +30,11 @@ podman pull <servidor>:5001/docker.io/library/nginx:1.27
 
 | Petición | Qué se sirve |
 |---|---|
-| `nginx:1.27.4` (exacto) | esa versión, si existe en `verified` o `quarantine` |
+| `nginx:1.27.4` (exacto) | esa versión (de `verified` si está; si no, del upstream) |
 | `nginx:1.27` (parcial) | la **mayor** versión `1.27.x` disponible (primero `verified`) |
 | `nginx:1` (parcial) | la mayor versión `1.x.y` disponible |
 | `nginx:latest` / `stable` | la versión verificada más reciente |
-| `nginx@sha256:…` | esa imagen por digest, si ya está en Zot |
+| `nginx@sha256:…` | esa imagen por digest (de `verified` si está; si no, del upstream) |
 | `alpine` (sin semver) | el tag literal |
 
 Solo se conservan las versiones que alguien pide: una por cada ref parcial o
@@ -84,6 +84,7 @@ tests/                 tests de la lógica de versiones y nombres
 | `CVE_SEVERITY_THRESHOLD` | updater | `HIGH,CRITICAL` | Severidades que bloquean la promoción |
 | `CHECK_INTERVAL` | updater | `6h` | Frecuencia del ciclo (formatos `30m`, `6h`, `7d`) |
 | `STATE_DIR` | proxy, updater | `/var/lib/proxy` | Dónde está `state.sqlite3` |
+| `SKOPEO_MULTI_ARCH` | proxy, updater | `system` | Plataformas que copia skopeo: `system`, `all` o `index-only` |
 | `LOG_LEVEL` | proxy, updater | `INFO` | Nivel de logging |
 
 ## Instalación
@@ -105,7 +106,7 @@ PYTHONPATH=shared python -m unittest discover -s tests -v
 - Sin autenticación en ninguno de los dos puertos. Zot en `5000` expone
   `verified/` y `quarantine/` sin pasar por la lógica del proxy. Si la red no es
   de confianza, no publiques `5000` o restringe el acceso en el firewall.
-- Los digests solo se sirven si la imagen ya existe en Zot; no se descargan por digest.
+- Los digests que no están verificados se sirven del upstream; al no tener tag, no pasan por cuarentena.
 - Los registros upstream privados (con credenciales) no están soportados todavía.
-- Para una versión parcial, si `verified` tiene una versión antigua y `quarantine`
-  una más nueva, se sirve la de `verified` hasta que la nueva se promueva.
+- Un tag parcial o flotante se resuelve contra `verified` primero; si no hay nada
+  verificado, se resuelve contra el upstream (la mayor versión publicada).
