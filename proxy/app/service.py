@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import threading
+import time
 
 from zqp import skopeo
 from zqp.image_ref import QUARANTINE, VERIFIED, ImageRef, RepoName
-from zqp.quarantine import copy_to_quarantine
 from zqp.state import StateStore
 from zqp.versions import TagKind, TagSpec, parse_tag, pick_tag
 from zqp.zot_api import ZotApi
@@ -40,8 +39,6 @@ class ImageService:
         self._settings = settings
         self._zot = zot
         self._state = state
-        # Serializa las descargas a cuarentena para no copiar dos veces la misma imagen.
-        self._fetch_lock = threading.Lock()
 
     def ensure_allowed(self, repo: RepoName) -> None:
         """Comprueba que el registro upstream está en la allowlist.
@@ -71,10 +68,11 @@ class ImageService:
         return self._zot.list_tags(repo.physical(VERIFIED))
 
     def locate(self, ref: ImageRef) -> LocalCopy:
-        """Devuelve la copia que se debe servir, descargándola a cuarentena si hace falta.
+        """Devuelve la copia que se debe servir, pidiéndola a Zot si no está local.
 
-        Registra la petición en el estado, busca primero en ``verified`` y después en
-        ``quarantine``, y si no hay ninguna descarga la imagen upstream.
+        Registra la petición, busca primero en ``verified`` y después en
+        ``quarantine``. Si no hay ninguna copia, delega la descarga en Zot, que la
+        sirve en streaming mientras la guarda en cuarentena.
 
         Args:
             ref: Petición del cliente (repositorio más tag o digest).
@@ -84,8 +82,8 @@ class ImageService:
 
         Raises:
             UpstreamNotAllowed: Si el registro no está permitido.
-            ImageNotFound: Si ni Zot ni el upstream tienen la imagen pedida.
-            SkopeoError: Si la descarga a cuarentena falla.
+            ImageNotFound: Si ningún tag del upstream cumple la petición.
+            SkopeoError: Si no se puede consultar la lista de tags del upstream.
         """
         self.ensure_allowed(ref.repo)
         if ref.is_digest:
@@ -97,10 +95,7 @@ class ImageService:
         local = self._find_local(ref.repo, spec)
         if local is not None:
             return local
-        with self._fetch_lock:
-            # Otra petición pudo descargarla mientras esperábamos el lock.
-            local = self._find_local(ref.repo, spec)
-            return local if local is not None else self._fetch(ref.repo, spec)
+        return self._delegate_to_zot(ref.repo, spec)
 
     def _find_local(self, repo: RepoName, spec: TagSpec) -> LocalCopy | None:
         return find_local_copy(
@@ -109,7 +104,23 @@ class ImageService:
             self._zot.list_tags(repo.physical(QUARANTINE)),
         )
 
-    def _fetch(self, repo: RepoName, spec: TagSpec) -> LocalCopy:
+    def _delegate_to_zot(self, repo: RepoName, spec: TagSpec) -> LocalCopy:
+        """Resuelve el tag concreto y deja que Zot descargue la imagen en streaming.
+
+        La descarga empieza cuando el cliente pide el manifest a ``quarantine/``: Zot
+        la sincroniza bajo demanda y la sirve mientras la recibe. Aquí solo se
+        resuelve la versión y se registra la entrada de cuarentena.
+
+        Args:
+            repo: Repositorio upstream.
+            spec: Referencia pedida, ya clasificada.
+
+        Returns:
+            Copia a servir en ``quarantine/`` con el tag concreto.
+
+        Raises:
+            ImageNotFound: Si ningún tag del upstream cumple la petición.
+        """
         if spec.kind is TagKind.EXACT:
             target = spec.reference
         else:
@@ -117,7 +128,8 @@ class ImageService:
         if target is None:
             raise ImageNotFound(f"Ningún tag de {repo.upstream_image} cumple '{spec.reference}'")
 
-        copy_to_quarantine(self._settings.zot_registry_host, self._state, repo, target)
+        self._state.add_quarantine(repo.registry, repo.path, target, int(time.time()))
+        logger.info("Pedido %s:%s a Zot para descarga en streaming", repo.upstream_image, target)
         return LocalCopy(QUARANTINE, target)
 
     def _locate_digest(self, ref: ImageRef) -> LocalCopy:
