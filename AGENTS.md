@@ -61,7 +61,7 @@ No cambies estas reglas sin confirmarlo con el usuario:
 
 ```bash
 # Tests de la lógica pura (desde la raíz del repo)
-PYTHONPATH=shared python -m unittest discover -s tests -v
+PYTHONPATH=shared:proxy python -m unittest discover -s tests -v
 
 # Comprobación de sintaxis
 python -m compileall -q shared proxy updater tests
