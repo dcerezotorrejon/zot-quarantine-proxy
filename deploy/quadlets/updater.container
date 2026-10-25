@@ -1,0 +1,18 @@
+[Unit]
+Description=Updater: detección, cuarentena, promoción y limpieza (Python + zli)
+Requires=zot.service
+After=zot.service
+
+[Container]
+Image=localhost/zot-updater:latest
+ContainerName=updater
+Pod=zot-quarantine-proxy.pod
+Environment=ZOT_URL=http://zot:5000
+Environment=QUARANTINE_DAYS=7
+Environment=CVE_SEVERITY_THRESHOLD=HIGH,CRITICAL
+Environment=CHECK_INTERVAL=6h
+Environment=LOG_LEVEL=INFO
+Volume=%h/proxy-data:/var/lib/proxy:Z
+
+[Install]
+WantedBy=default.target

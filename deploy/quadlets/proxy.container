@@ -1,0 +1,16 @@
+[Unit]
+Description=Proxy OCI pull-through con cuarentena (Python)
+Requires=zot.service
+After=zot.service
+
+[Container]
+Image=localhost/zot-proxy:latest
+ContainerName=proxy
+Pod=zot-quarantine-proxy.pod
+Environment=ZOT_URL=http://zot:5000
+Environment=UPSTREAM_REGISTRIES=docker.io,ghcr.io,quay.io,registry.k8s.io
+Environment=LOG_LEVEL=INFO
+Volume=%h/proxy-data:/var/lib/proxy:Z
+
+[Install]
+WantedBy=default.target

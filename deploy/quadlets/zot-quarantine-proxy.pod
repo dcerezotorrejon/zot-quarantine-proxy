@@ -1,0 +1,13 @@
+[Unit]
+Description=Pod zot-quarantine-proxy (zot, proxy y updater)
+
+[Pod]
+PodName=zot-quarantine-proxy
+PublishPort=5000:5000
+PublishPort=5001:5001
+AddHost=zot:127.0.0.1
+AddHost=proxy:127.0.0.1
+AddHost=updater:127.0.0.1
+
+[Install]
+WantedBy=default.target

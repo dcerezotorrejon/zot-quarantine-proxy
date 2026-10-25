@@ -1,0 +1,51 @@
+# Entorno de desarrollo local (podman compose / docker compose).
+# Build desde la raíz del repo: `podman compose -f deploy/compose.yaml up -d --build`
+services:
+  zot:
+    image: ghcr.io/project-zot/zot:latest
+    networks: [zqp]
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./config/zot/config.json:/etc/zot/config.json:ro
+      - zot-data:/var/lib/zot
+
+  proxy:
+    build:
+      context: ..
+      dockerfile: proxy/Containerfile
+    image: localhost/zot-proxy:latest
+    depends_on:
+      - zot
+    networks: [zqp]
+    environment:
+      ZOT_URL: http://zot:5000
+      LOG_LEVEL: INFO
+    ports:
+      - "5001:5001"
+    volumes:
+      - proxy-data:/var/lib/proxy
+
+  updater:
+    build:
+      context: ..
+      dockerfile: updater/Containerfile
+    image: localhost/zot-updater:latest
+    depends_on:
+      - zot
+    networks: [zqp]
+    environment:
+      ZOT_URL: http://zot:5000
+      QUARANTINE_DAYS: "7"
+      CVE_SEVERITY_THRESHOLD: HIGH,CRITICAL
+      CHECK_INTERVAL: 6h
+      LOG_LEVEL: INFO
+    volumes:
+      - proxy-data:/var/lib/proxy
+
+networks:
+  zqp:
+
+volumes:
+  zot-data:
+  proxy-data:
