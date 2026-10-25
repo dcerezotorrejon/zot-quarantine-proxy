@@ -16,7 +16,11 @@ class SkopeoError(RuntimeError):
 
 
 def copy(source: str, destination: str) -> None:
-    """Copia una imagen con todas sus plataformas.
+    """Copia una imagen al destino.
+
+    Por defecto copia solo la plataforma del sistema (``--multi-arch system``),
+    para no almacenar ni escanear arquitecturas que no se usan. Se puede cambiar
+    con la variable ``SKOPEO_MULTI_ARCH`` (``system``, ``all`` o ``index-only``).
 
     Args:
         source: Referencia de origen sin ``docker://``, p. ej. ``docker.io/library/nginx:1.27``.
@@ -25,8 +29,9 @@ def copy(source: str, destination: str) -> None:
     Raises:
         SkopeoError: Si skopeo falla o supera el tiempo límite.
     """
+    multi_arch = env_str("SKOPEO_MULTI_ARCH", "system")
     _run(
-        ["copy", "--multi-arch", "all", f"docker://{source}", f"docker://{destination}"],
+        ["copy", "--multi-arch", multi_arch, f"docker://{source}", f"docker://{destination}"],
         COPY_TIMEOUT_SECONDS,
     )
 

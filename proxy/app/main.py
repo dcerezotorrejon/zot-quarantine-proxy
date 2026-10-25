@@ -11,14 +11,16 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
-from zqp.image_ref import QUARANTINE, VERIFIED, ImageRef, InvalidImageName, RepoName
+from zqp.image_ref import VERIFIED, ImageRef, InvalidImageName, RepoName
 from zqp.skopeo import SkopeoError
 from zqp.state import StateStore
 from zqp.zot_api import ZotApi
 
 from .config import Settings
 from .forwarder import ZotForwarder, to_streaming_response
+from .resolver import ServeSource
 from .service import ImageNotFound, ImageService, UpstreamNotAllowed
+from .upstream import UpstreamAuthError, UpstreamForwarder
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Prepara los servicios al arrancar y los libera al parar.
 
     Args:
-        app: Aplicación FastAPI a la que se añaden ``service`` y ``forwarder``.
+        app: Aplicación FastAPI a la que se añaden ``service``, ``zot`` y ``upstream``.
 
     Yields:
         Control a la aplicación mientras está en marcha.
@@ -43,12 +45,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     zot = ZotApi(settings.zot_url)
     state = StateStore(settings.state_dir / "state.sqlite3")
     app.state.service = ImageService(settings, zot, state)
-    app.state.forwarder = ZotForwarder(settings.zot_url)
+    app.state.zot = ZotForwarder(settings.zot_url)
+    app.state.upstream = UpstreamForwarder()
     logger.info("Proxy listo; Zot en %s", settings.zot_url)
     try:
         yield
     finally:
-        await app.state.forwarder.close()
+        await app.state.zot.close()
+        await app.state.upstream.close()
         zot.close()
 
 
@@ -97,6 +101,7 @@ _register_error(InvalidImageName, 400, "NAME_INVALID")
 _register_error(UpstreamNotAllowed, 403, "DENIED")
 _register_error(ImageNotFound, 404, "MANIFEST_UNKNOWN")
 _register_error(SkopeoError, 502, "UNKNOWN")
+_register_error(UpstreamAuthError, 502, "UNKNOWN")
 _register_error(httpx.TransportError, 503, "UNAVAILABLE")
 
 
@@ -108,7 +113,7 @@ async def api_version() -> Response:
 
 @app.api_route("/v2/{name:path}/manifests/{reference}", methods=["GET", "HEAD"])
 async def get_manifest(name: str, reference: str, request: Request) -> Response:
-    """Sirve el manifest de una imagen desde la copia que corresponda.
+    """Sirve el manifest de una imagen desde ``verified`` o desde el registro upstream.
 
     Args:
         name: Repositorio tal y como llega en la ruta, p. ej. ``docker.io/library/nginx``.
@@ -116,18 +121,24 @@ async def get_manifest(name: str, reference: str, request: Request) -> Response:
         request: Petición entrante, para acceder al servicio y al reenvío.
 
     Returns:
-        Manifest reenviado desde Zot, en streaming.
+        Manifest reenviado, en streaming.
     """
     ref = ImageRef.from_route(name, reference)
-    local = await run_in_threadpool(request.app.state.service.locate, ref)
-    path = f"/v2/{ref.repo.physical(local.namespace)}/manifests/{local.reference}"
-    upstream = await request.app.state.forwarder.send(request.method, path, request.headers)
+    target = await run_in_threadpool(request.app.state.service.locate, ref)
+    if target.source is ServeSource.VERIFIED:
+        path = f"/v2/{ref.repo.physical(VERIFIED)}/manifests/{target.reference}"
+        upstream = await request.app.state.zot.send(request.method, path, request.headers)
+    else:
+        path = f"/v2/{ref.repo.path}/manifests/{target.reference}"
+        upstream = await request.app.state.upstream.send(
+            ref.repo, path, request.method, request.headers
+        )
     return to_streaming_response(upstream)
 
 
 @app.api_route("/v2/{name:path}/blobs/{digest}", methods=["GET", "HEAD"])
 async def get_blob(name: str, digest: str, request: Request) -> Response:
-    """Sirve un blob por digest, buscándolo en ``verified`` y después en ``quarantine``.
+    """Sirve un blob por digest, buscándolo en ``verified`` y luego en el upstream.
 
     Args:
         name: Repositorio tal y como llega en la ruta.
@@ -135,19 +146,19 @@ async def get_blob(name: str, digest: str, request: Request) -> Response:
         request: Petición entrante.
 
     Returns:
-        Blob reenviado desde Zot, o error ``BLOB_UNKNOWN`` si no existe en ninguno.
+        Blob reenviado en streaming.
     """
     repo = RepoName.from_name(name)
     request.app.state.service.ensure_allowed(repo)
-    forwarder = request.app.state.forwarder
-    # Los blobs son direccionables por digest: se buscan primero en verified y luego en quarantine.
-    for namespace in (VERIFIED, QUARANTINE):
-        path = f"/v2/{repo.physical(namespace)}/blobs/{digest}"
-        upstream = await forwarder.send(request.method, path, request.headers)
-        if upstream.status_code != 404:
-            return to_streaming_response(upstream)
-        await upstream.aclose()
-    return oci_error(404, "BLOB_UNKNOWN", f"El blob {digest} no existe")
+    path = f"/v2/{repo.physical(VERIFIED)}/blobs/{digest}"
+    upstream = await request.app.state.zot.send(request.method, path, request.headers)
+    if upstream.status_code != 404:
+        return to_streaming_response(upstream)
+    await upstream.aclose()
+    upstream = await request.app.state.upstream.send(
+        repo, f"/v2/{repo.path}/blobs/{digest}", request.method, request.headers
+    )
+    return to_streaming_response(upstream)
 
 
 @app.get("/v2/{name:path}/tags/list")
