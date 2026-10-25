@@ -1,0 +1,80 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "build",
+  "permissions": [
+    { "action": "shell", "resource": "*", "effect": "ask" },
+
+    { "action": "shell", "resource": "git status *", "effect": "allow" },
+    { "action": "shell", "resource": "git diff *", "effect": "allow" },
+    { "action": "shell", "resource": "git log *", "effect": "allow" },
+    { "action": "shell", "resource": "git show *", "effect": "allow" },
+
+    { "action": "shell", "resource": "python -m unittest *", "effect": "allow" },
+    { "action": "shell", "resource": "python -m compileall *", "effect": "allow" },
+    { "action": "shell", "resource": "PYTHONPATH=shared python -m unittest *", "effect": "allow" },
+    { "action": "shell", "resource": "PYTHONPATH=shared python -m compileall *", "effect": "allow" },
+
+    { "action": "shell", "resource": "podman ps *", "effect": "allow" },
+    { "action": "shell", "resource": "podman pod ps *", "effect": "allow" },
+    { "action": "shell", "resource": "podman images *", "effect": "allow" },
+    { "action": "shell", "resource": "podman logs *", "effect": "allow" },
+    { "action": "shell", "resource": "systemctl --user status *", "effect": "allow" },
+    { "action": "shell", "resource": "journalctl --user *", "effect": "allow" },
+
+    { "action": "shell", "resource": "git push *", "effect": "deny" },
+    { "action": "shell", "resource": "git reset --hard *", "effect": "deny" },
+    { "action": "shell", "resource": "git clean *", "effect": "deny" },
+    { "action": "shell", "resource": "rm -rf *", "effect": "deny" },
+    { "action": "shell", "resource": "sudo *", "effect": "deny" },
+    { "action": "shell", "resource": "podman rm *", "effect": "deny" },
+    { "action": "shell", "resource": "podman pod rm *", "effect": "deny" },
+    { "action": "shell", "resource": "podman volume rm *", "effect": "deny" },
+    { "action": "shell", "resource": "podman system prune *", "effect": "deny" },
+
+    { "action": "read", "resource": "*.env", "effect": "ask" },
+    { "action": "read", "resource": "*.env.example", "effect": "allow" },
+    { "action": "edit", "resource": "*.env", "effect": "deny" },
+    { "action": "edit", "resource": "zot-data/*", "effect": "deny" },
+    { "action": "edit", "resource": "proxy-data/*", "effect": "deny" }
+  ],
+  "watcher": {
+    "ignore": [
+      "zot-data/**",
+      "proxy-data/**",
+      "**/__pycache__/**",
+      ".pytest_cache/**",
+      ".venv/**"
+    ]
+  },
+  "commands": {
+    "test": {
+      "description": "Ejecuta los tests de la lógica compartida",
+      "template": "Ejecuta `PYTHONPATH=shared python -m unittest discover -s tests -v` desde la raíz del repo y resume el resultado. Si hay fallos, explica la causa probable y propón el arreglo sin aplicarlo, salvo que lo pida.",
+    },
+    "check": {
+      "description": "Comprueba sintaxis y tests antes de dar un cambio por bueno",
+      "template": "Ejecuta `python -m compileall -q shared proxy updater tests` y después los tests (`PYTHONPATH=shared python -m unittest discover -s tests -v`). Resume los errores por archivo y línea. Si todo pasa, dilo explícitamente e indica qué NO está verificado (integración con Zot, skopeo, zli o Trivy).",
+    },
+    "review": {
+      "description": "Revisa los cambios actuales según AGENTS.md",
+      "template": "Revisa los cambios actuales (`git diff` y `git status`) según las reglas de AGENTS.md: responsabilidad única por módulo, type hints y docstrings en español, sin `print` ni `except` silenciosos, configuración solo por variables de entorno, y respeto de los invariantes de cuarentena y tags. Lista los hallazgos por severidad con archivo y línea. No edites nada.",
+    },
+  },
+  "agents": {
+    "reviewer": {
+      "description": "Revisa cambios sin modificar archivos: correctitud, seguridad y tests que faltan",
+      "mode": "subagent",
+      "system": "Eres un revisor de código. Señala problemas de correctitud, seguridad (en especial permisos, rutas y ejecución de comandos) y tests que faltan. Ordena los hallazgos por severidad e incluye archivo y línea. No edites archivos ni ejecutes comandos que cambien el estado.",
+      "permissions": [
+        { "action": "*", "resource": "*", "effect": "deny" },
+        { "action": "read", "resource": "*", "effect": "allow" },
+        { "action": "glob", "resource": "*", "effect": "allow" },
+        { "action": "grep", "resource": "*", "effect": "allow" },
+        { "action": "shell", "resource": "git diff *", "effect": "allow" },
+        { "action": "shell", "resource": "git status *", "effect": "allow" },
+        { "action": "shell", "resource": "git log *", "effect": "allow" },
+        { "action": "read", "resource": "*.env", "effect": "deny" }
+      ]
+    }
+  }
+}
