@@ -1,0 +1,29 @@
+# Build desde la raíz del repo:
+#   podman build -t localhost/zot-updater:latest -f updater/Containerfile .
+FROM registry.fedoraproject.org/fedora-minimal:latest
+
+ARG ZOT_VERSION=v2.1.22
+
+RUN microdnf install -y python3 python3-pip skopeo curl \
+ && curl -fsSL -o /usr/local/bin/zli \
+      "https://github.com/project-zot/zot/releases/download/${ZOT_VERSION}/zli-linux-amd64" \
+ && chmod 0755 /usr/local/bin/zli \
+ && microdnf remove -y curl \
+ && microdnf clean all \
+ && python3 -m venv /opt/venv
+
+COPY updater/requirements.txt /tmp/requirements.txt
+RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements.txt \
+ && rm /tmp/requirements.txt
+
+COPY config/containers/registries.conf.d/zqp.conf /etc/containers/registries.conf.d/zqp.conf
+
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONPATH=/srv \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /srv
+COPY shared/zqp /srv/zqp
+COPY updater/app /srv/app
+
+CMD ["python", "-m", "app.main"]
