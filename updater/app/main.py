@@ -39,10 +39,10 @@ def build_cycle(settings: Settings, zot: ZotApi, state: StateStore) -> list[Step
     scanner = CveScanner(settings.zli_bin, settings.zot_url, settings.cve_severities)
     promoter = Promoter(state, zot, scanner, host, settings.quarantine_days)
     return [
+        ("limpieza de estado", StateCleaner(state, zot).run),
         ("sincronizar upstream", UpstreamSync(state, zot, host).run),
         ("promover desde cuarentena", promoter.run),
         ("alias y retención", Retention(state, zot, host).run),
-        ("limpieza de estado", StateCleaner(state, zot).run),
     ]
 
 

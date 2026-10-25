@@ -98,11 +98,18 @@ class CveScanner:
 
 
 def _parse_cve_list(stdout: str) -> list[dict] | None:
-    """Lista de CVEs del JSON de `zli cve list -f json`, o None si la salida no es válida."""
-    if not stdout.strip():
+    """Lista de CVEs del JSON de `zli cve list -f json`, o None si la salida no es válida.
+
+    `zli` devuelve el texto ``No CVEs found for image`` (en lugar de JSON) cuando
+    la imagen no tiene CVEs; en ese caso se interpreta como lista vacía.
+    """
+    stripped = stdout.strip()
+    if not stripped:
         return None
+    if stripped == "No CVEs found for image":
+        return []
     try:
-        data = json.loads(stdout)
+        data = json.loads(stripped)
     except json.JSONDecodeError:
         return None
     if not isinstance(data, dict) or "CVEList" not in data:

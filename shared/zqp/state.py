@@ -89,6 +89,20 @@ class StateStore:
             grouped.setdefault((row["registry"], row["path"]), []).append(row["reference"])
         return grouped
 
+    def delete_ref(self, registry: str, path: str, reference: str) -> None:
+        """Elimina una referencia pedida del estado.
+
+        Args:
+            registry: Registro upstream.
+            path: Ruta del repositorio.
+            reference: Tag pedido que se deja de conservar.
+        """
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM refs WHERE registry = ? AND path = ? AND reference = ?",
+                (registry, path, reference),
+            )
+
     def delete_repo(self, registry: str, path: str) -> None:
         """Elimina un paquete completo del estado: refs y cuarentena.
 
