@@ -124,10 +124,10 @@ El directorio `.venv/` está en `.gitignore`.
   defaults de `ZOT_URL` en `proxy/app/config.py` y `updater/app/config.py`.
 - La imagen de Zot debe ser `ghcr.io/project-zot/zot` (full). No uses
   `zot-minimal`, porque no incluye search ni CVEs.
-- Los directorios de datos (`zot-data/`, `proxy-data/`) nunca se versionan ni se
-  borran desde el agente.
-- Los quadlets usan `%h` y `:Z` a propósito (rootless y SELinux). No los
-  "simplifiques" sin probar en Fedora.
+- Los volúmenes de datos (`zot-data`, `proxy-data`) son volúmenes nombrados de
+  Podman y nunca se borran desde el agente.
+- La configuración de Zot se monta por bind con `%h` y `:Z` (rootless y SELinux);
+  los datos usan volúmenes nombrados. No lo "simplifiques" sin probar en Fedora.
 
 ## Verificación
 

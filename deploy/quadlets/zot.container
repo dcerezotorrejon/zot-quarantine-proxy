@@ -6,7 +6,7 @@ Image=ghcr.io/project-zot/zot:v2.1.22
 ContainerName=zot
 Pod=zot-quarantine-proxy.pod
 Volume=%h/zot-quarantine-proxy/config/zot/config.json:/etc/zot/config.json:ro,Z
-Volume=%h/zot-data:/var/lib/zot:Z
+Volume=zot-data:/var/lib/zot
 
 [Install]
 WantedBy=default.target

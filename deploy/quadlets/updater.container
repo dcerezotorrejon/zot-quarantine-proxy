@@ -12,7 +12,7 @@ Environment=QUARANTINE_DAYS=7
 Environment=CVE_SEVERITY_THRESHOLD=HIGH,CRITICAL
 Environment=CHECK_INTERVAL=6h
 Environment=LOG_LEVEL=INFO
-Volume=%h/proxy-data:/var/lib/proxy:Z
+Volume=proxy-data:/var/lib/proxy
 
 [Install]
 WantedBy=default.target

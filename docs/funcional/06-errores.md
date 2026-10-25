@@ -55,6 +55,6 @@ responde, termina con error. Revisar `journalctl --user -u zot.service`.
 
 | Mensaje | Origen | Qué hacer |
 |---|---|---|
-| `no space left on device` | Disco lleno. Afecta a Zot o al proxy. | Liberar espacio en `~/zot-data` o ampliar el disco. |
-| Errores de la base de datos SQLite | Fichero bloqueado o corrupto. | Parar los servicios y revisar `~/proxy-data/state.sqlite3`. |
+| `no space left on device` | Disco lleno. Afecta a Zot o al proxy. | Liberar espacio en el volumen `zot-data` o ampliar el disco. |
+| Errores de la base de datos SQLite | Fichero bloqueado o corrupto. | Parar los servicios y revisar el volumen `proxy-data`. |
 | Errores de zli | Zot no ha terminado de escanear, o el binario no está. | Esperar al siguiente ciclo. Si persiste, revisar la imagen del updater. |

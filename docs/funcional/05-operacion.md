@@ -71,8 +71,10 @@ upstream no responde, o que las credenciales o la red han cambiado.
 
 | Qué | Dónde | Notas |
 |---|---|---|
-| Imágenes (verificadas y cuarentena) | `~/zot-data/` | Puede ocupar varios GB. La base de datos de Trivy también está aquí. |
-| Base de datos de estado | `~/proxy-data/state.sqlite3` | Lista de refs pedidas y entradas de cuarentena. |
+| Imágenes (verificadas y cuarentena) | volumen `zot-data` | Puede ocupar varios GB. La base de datos de Trivy también está aquí. |
+| Base de datos de estado | volumen `proxy-data` | Lista de refs pedidas y entradas de cuarentena. |
+
+Los volúmenes se guardan en `~/.local/share/containers/storage/volumes/<nombre>/_data/`.
 
 ### Copia de seguridad
 
@@ -81,11 +83,11 @@ los servicios que la escriben:
 
 ```bash
 systemctl --user stop proxy.service updater.service
-cp ~/proxy-data/state.sqlite3 ~/backup/state-$(date +%F).sqlite3
+cp ~/.local/share/containers/storage/volumes/proxy-data/_data/state.sqlite3 ~/backup/state-$(date +%F).sqlite3
 systemctl --user start proxy.service updater.service
 ```
 
-Las imágenes en `~/zot-data/` se pueden reconstruir: si se pierden, el sistema
+Las imágenes en el volumen `zot-data` se pueden reconstruir: si se pierden, el sistema
 vuelve a descargarlas cuando se pidan. Sin embargo, se pierden las versiones
 verificadas y el plazo de cuarentena vuelve a contar desde cero.
 
@@ -96,7 +98,7 @@ las imágenes** y el estado:
 
 ```bash
 systemctl --user stop proxy.service updater.service zot.service
-rm -rf ~/zot-data/* ~/proxy-data/*
+podman volume rm zot-data proxy-data
 systemctl --user start zot.service proxy.service updater.service
 ```
 
@@ -122,7 +124,7 @@ Recomendaciones:
 | Tarea | Frecuencia | Cómo |
 |---|---|---|
 | Revisar imágenes eliminadas por CVEs | Semanal | `journalctl --user -u updater.service --since "7 days ago" \| grep -i "eliminada"` |
-| Comprobar espacio en disco | Mensual | `du -sh ~/zot-data ~/proxy-data` |
+| Comprobar espacio en disco | Mensual | `du -sh ~/.local/share/containers/storage/volumes/{zot-data,proxy-data}` |
 | Copia de seguridad del estado | Mensual | Ver [copia de seguridad](#copia-de-seguridad). |
 | Actualizar el sistema | Cuando haya versión nueva | Ver [INSTALL.md, sección Actualizar](../../INSTALL.md#actualizar). |
 

@@ -50,16 +50,15 @@ podman build -t localhost/zot-updater:latest -f updater/Containerfile .
 El `updater` descarga el binario `zli` del release de Zot. Para cambiar de
 versión: `podman build --build-arg ZOT_VERSION=v2.1.x ...`.
 
-## 6. Crear los directorios de datos
+## 6. Volúmenes de datos
 
-Los volúmenes rootless deben existir antes de arrancar:
+Los datos van en volúmenes nombrados de Podman (`zot-data` y `proxy-data`), que se
+crean automáticamente al primer arranque. No hace falta crearlos a mano.
 
-```bash
-mkdir -p ~/zot-data ~/proxy-data
-```
+- `zot-data`: almacenamiento de Zot (imágenes y base de datos de Trivy, ~3 GB).
+- `proxy-data`: estado SQLite compartido por `proxy` y `updater`.
 
-- `~/zot-data`: almacenamiento de Zot (imágenes y base de datos de Trivy, ~3 GB).
-- `~/proxy-data`: estado SQLite compartido por `proxy` y `updater`.
+Se guardan en `~/.local/share/containers/storage/volumes/`.
 
 ## 7. Instalar los quadlets
 
@@ -135,9 +134,9 @@ podman pull fedora-server:5001/nginx:alpine
 curl -s http://fedora-server:5000/v2/      # Zot directo, debe responder {}
 ```
 
-La primera descarga de cada tag queda en `quarantine`. Las siguientes se sirven
-desde caché. El `updater` promueve a `verified` tras `QUARANTINE_DAYS` si el
-escaneo está limpio. Para ver el estado en Zot:
+La primera descarga de cada tag se sirve del registro público y se copia a
+`quarantine` en segundo plano. Cuando el `updater` la promueve a `verified` (tras
+`QUARANTINE_DAYS` con escaneo limpio), se sirve desde local. Para ver el estado:
 
 ```bash
 podman exec zot ls /var/lib/zot
@@ -160,7 +159,7 @@ rm -f ~/.config/containers/systemd/zot-quarantine-proxy.pod ~/.config/containers
       ~/.config/containers/systemd/proxy.container ~/.config/containers/systemd/updater.container
 systemctl --user daemon-reload
 # Datos (opcional, borra todas las imágenes cacheadas):
-rm -rf ~/zot-data ~/proxy-data
+podman volume rm zot-data proxy-data
 ```
 
 ## Desarrollo local (sin quadlets)
