@@ -37,7 +37,11 @@ class ZotForwarder:
         )
 
     async def send(
-        self, method: str, path: str, request_headers: Mapping[str, str]
+        self,
+        method: str,
+        path: str,
+        request_headers: Mapping[str, str],
+        accept: str | None = None,
     ) -> httpx.Response:
         """Envía la petición a Zot sin leer el cuerpo: la respuesta se hace en streaming.
 
@@ -46,6 +50,10 @@ class ZotForwarder:
             path: Ruta en Zot, p. ej. ``/v2/verified/.../manifests/1.27``.
             request_headers: Cabeceras de la petición original. Solo se reenvían
                 ``Accept`` y ``Range``.
+            accept: Valor con el que fijar ``Accept``; si es ``None`` se reenvía la
+                cabecera del cliente. Para manifests debe ser ``MANIFEST_ACCEPT``,
+                para que el registro devuelva índices OCI aunque el cliente no los
+                pida.
 
         Returns:
             La respuesta de Zot, pendiente de leer. Quien la use debe cerrarla.
@@ -55,6 +63,8 @@ class ZotForwarder:
             for name in FORWARDED_REQUEST_HEADERS
             if name in request_headers
         }
+        if accept is not None:
+            headers["accept"] = accept
         request = self._client.build_request(method, path, headers=headers)
         return await self._client.send(request, stream=True)
 

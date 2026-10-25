@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from zqp.image_ref import VERIFIED, ImageRef, InvalidImageName, RepoName
 from zqp.skopeo import SkopeoError
 from zqp.state import StateStore
-from zqp.zot_api import ZotApi
+from zqp.zot_api import MANIFEST_ACCEPT, ZotApi
 
 from .config import Settings
 from .forwarder import ZotForwarder, to_streaming_response
@@ -127,11 +127,13 @@ async def get_manifest(name: str, reference: str, request: Request) -> Response:
     target = await run_in_threadpool(request.app.state.service.locate, ref)
     if target.source is ServeSource.VERIFIED:
         path = f"/v2/{ref.repo.physical(VERIFIED)}/manifests/{target.reference}"
-        upstream = await request.app.state.zot.send(request.method, path, request.headers)
+        upstream = await request.app.state.zot.send(
+            request.method, path, request.headers, accept=MANIFEST_ACCEPT
+        )
     else:
         path = f"/v2/{ref.repo.path}/manifests/{target.reference}"
         upstream = await request.app.state.upstream.send(
-            ref.repo, path, request.method, request.headers
+            ref.repo, path, request.method, request.headers, accept=MANIFEST_ACCEPT
         )
     return to_streaming_response(upstream)
 

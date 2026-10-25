@@ -48,7 +48,12 @@ class UpstreamForwarder:
         self._tokens: dict[tuple[str, str], tuple[str, float]] = {}
 
     async def send(
-        self, repo: RepoName, path: str, method: str, request_headers: Mapping[str, str]
+        self,
+        repo: RepoName,
+        path: str,
+        method: str,
+        request_headers: Mapping[str, str],
+        accept: str | None = None,
     ) -> httpx.Response:
         """Envía la petición al upstream en streaming, añadiendo el token anónimo.
 
@@ -58,6 +63,10 @@ class UpstreamForwarder:
             method: Método HTTP de la petición original (GET o HEAD).
             request_headers: Cabeceras de la petición original. Solo se reenvían
                 ``Accept`` y ``Range``.
+            accept: Valor con el que fijar ``Accept``; si es ``None`` se reenvía la
+                cabecera del cliente. Para manifests debe ser ``MANIFEST_ACCEPT``,
+                para que el registro devuelva índices OCI aunque el cliente no los
+                pida.
 
         Returns:
             La respuesta del upstream, pendiente de leer (streaming).
@@ -68,6 +77,8 @@ class UpstreamForwarder:
             for name in FORWARDED_REQUEST_HEADERS
             if name in request_headers
         }
+        if accept is not None:
+            headers["accept"] = accept
         token = await self._token(repo)
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
