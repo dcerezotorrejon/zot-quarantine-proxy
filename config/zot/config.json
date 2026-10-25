@@ -21,6 +21,63 @@
       "cve": {
         "updateInterval": "24h"
       }
+    },
+    "sync": {
+      "enable": true,
+      "registries": [
+        {
+          "urls": ["https://registry-1.docker.io"],
+          "onDemand": true,
+          "stream": true,
+          "tlsVerify": true,
+          "content": [
+            {
+              "prefix": "**",
+              "destination": "/quarantine/docker.io",
+              "stripPrefix": true
+            }
+          ]
+        },
+        {
+          "urls": ["https://ghcr.io"],
+          "onDemand": true,
+          "stream": true,
+          "tlsVerify": true,
+          "content": [
+            {
+              "prefix": "**",
+              "destination": "/quarantine/ghcr.io",
+              "stripPrefix": true
+            }
+          ]
+        },
+        {
+          "urls": ["https://quay.io"],
+          "onDemand": true,
+          "stream": true,
+          "tlsVerify": true,
+          "content": [
+            {
+              "prefix": "**",
+              "destination": "/quarantine/quay.io",
+              "stripPrefix": true
+            }
+          ]
+        },
+        {
+          "urls": ["https://registry.k8s.io"],
+          "onDemand": true,
+          "stream": true,
+          "tlsVerify": true,
+          "content": [
+            {
+              "prefix": "**",
+              "destination": "/quarantine/registry.k8s.io",
+              "stripPrefix": true
+            }
+          ]
+        }
+      ]
     }
   }
 }

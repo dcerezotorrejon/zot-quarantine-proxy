@@ -2,7 +2,7 @@
 # Build desde la raíz del repo: `podman compose -f deploy/compose.yaml up -d --build`
 services:
   zot:
-    image: ghcr.io/project-zot/zot:latest
+    image: ghcr.io/project-zot/zot:v2.1.22
     networks: [zqp]
     ports:
       - "5000:5000"

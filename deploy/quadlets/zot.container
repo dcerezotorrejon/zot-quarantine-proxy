@@ -2,7 +2,7 @@
 Description=Zot OCI registry (almacenamiento y escaneo CVE con Trivy embebido)
 
 [Container]
-Image=ghcr.io/project-zot/zot:latest
+Image=ghcr.io/project-zot/zot:v2.1.22
 ContainerName=zot
 Pod=zot-quarantine-proxy.pod
 Volume=%h/zot-quarantine-proxy/config/zot/config.json:/etc/zot/config.json:ro,Z
