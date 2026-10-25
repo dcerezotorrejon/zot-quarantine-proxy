@@ -50,7 +50,7 @@ podman pull <servidor>:5001/docker.io/library/nginx:1.27
 ¿Hay una versión en cuarentena que cumpla 1.27? ──sí──► se sirve (cuarentena)
         │ no
         ▼
-Se descarga del upstream a cuarentena y se sirve desde ahí
+Zot la descarga del upstream a cuarentena y la sirve en streaming mientras la recibe
 ```
 
 Las reglas de qué versión cumple cada petición están en

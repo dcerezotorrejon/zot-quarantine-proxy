@@ -29,7 +29,7 @@ clientes (docker/podman pull)
         ▼
 ┌──────────── pod zot-quarantine-proxy (red compartida) ────────────┐
 │  [proxy]   :5001 ── reverse proxy OCI ──► [zot]  :5000           │
-│  (skopeo: fetch e insert)                                        │
+│  (resuelve versión; Zot descarga en streaming)                   │
 │  [updater] skopeo + zli ───────────────────► zli cve list        │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -92,8 +92,10 @@ Flujo para un manifest:
 2. Si es un digest, servirlo solo si ya existe en Zot.
 3. Si es un tag, registrar la ref en SQLite.
 4. Buscar copia local: primero `verified`, después `quarantine`.
-5. Si no hay copia, descargar a `quarantine` con `skopeo copy` y servir desde ahí.
-   Las descargas se serializan con un lock.
+5. Si no hay copia, resolver el tag concreto (con `skopeo list-tags` para flotantes y
+   parciales), registrar la entrada de cuarentena y pedir la imagen a Zot en
+   `quarantine/`. Zot la descarga bajo demanda y la sirve en streaming mientras la
+   recibe. El proxy no descarga ni serializa descargas: lo hace Zot.
 
 ## 7. Resolución de tags
 
@@ -131,6 +133,11 @@ fallo en uno no detiene los demás.
 `config/zot/config.json` activa `search` con `cve` (Trivy embebido, base de datos
 actualizada cada 24h) y `storage.gc` con `dedupe`. Zot escucha en el puerto 5000
 dentro del pod.
+
+La extensión `sync` descarga bajo demanda desde cada registro permitido (`docker.io`,
+`ghcr.io`, `quay.io`, `registry.k8s.io`) con `stream: true`. Cada registro guarda sus
+imágenes en `quarantine/<registro>/…`, con `prefix: "**"` y `stripPrefix: true`. Zot
+se fija a la versión `v2.1.22`, que es la documentada para el streaming.
 
 El escaneo corre en segundo plano cada ~15 min, sin configuración. Por eso un
 tag recién insertado puede no tener resultado de CVEs todavía.

@@ -14,7 +14,8 @@ Proxy de imágenes de contenedores (pull-through cache) para homelab, basado en
   - `quarantine/<registro>/<repo>`: en espera. Se sirve como caché, pero solo
     se promueve a `verified` tras los días de cuarentena y con escaneo limpio.
 - **proxy** (Python, Fedora minimal) es el endpoint OCI al que apuntan los
-  clientes. Resuelve el tag pedido, descarga lo que falte con `skopeo` y sirve.
+  clientes. Resuelve el tag pedido y, si no hay copia local, pide la imagen a Zot, que
+  la descarga y la sirve en streaming.
 - **updater** (Python, Fedora) cada 6 h detecta versiones nuevas, purga lo que
   el upstream retiró, promueve lo que cumple las reglas, mantiene los alias
   (`latest`, `stable`, `1.27`…) y limpia la base de datos de paquetes huérfanos.

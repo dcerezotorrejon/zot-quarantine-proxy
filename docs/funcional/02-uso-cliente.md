@@ -47,7 +47,7 @@ podman pull fedora-server:5001/ghcr.io/owner/herramienta:2.0.0
 | Situación | Resultado |
 |---|---|
 | La imagen ya está en el almacén | Se descarga al instante desde la caché local. |
-| La imagen no estaba y existe en el upstream | Se descarga y se sirve desde cuarentena. La primera descarga tarda lo que tarde el upstream. |
+| La imagen no estaba y existe en el upstream | Zot la descarga y la sirve en streaming desde cuarentena: el `pull` empieza sin esperar a que termine la descarga completa. |
 | El registro no está permitido | Error `DENIED` (403). |
 | El nombre no es válido | Error `NAME_INVALID` (400). |
 | No existe ningún tag que cumpla la petición | Error `MANIFEST_UNKNOWN` (404) para parciales y flotantes. Ver [06 · Errores](06-errores.md). |

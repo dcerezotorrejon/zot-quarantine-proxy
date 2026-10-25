@@ -11,7 +11,7 @@ y Docker muestran el mensaje tal cual. Esta tabla explica cada código y qué ha
 | 403 | `DENIED` | El registro de origen no está en `UPSTREAM_REGISTRIES`. | Añadir el registro a la lista, o usar otro. |
 | 404 | `MANIFEST_UNKNOWN` | No existe ningún tag que cumpla la petición (parcial o flotante), o el digest no está en el almacén. | Comprobar que el tag existe en el registro original. |
 | 404 | `BLOB_UNKNOWN` | Un blob pedido no existe en ninguno de los dos namespaces. | Suele ser una descarga cortada. Repetir el `pull`. |
-| 502 | `UNKNOWN` | Falló `skopeo`: el upstream no responde, el tag exacto no existe o la descarga se cortó. | Ver el mensaje de skopeo en el log del proxy. |
+| 502 | `UNKNOWN` | Falló la consulta de tags del upstream (`skopeo list-tags`) al resolver un tag flotante o parcial. | Ver el mensaje de skopeo en el log del proxy. |
 | 503 | `UNAVAILABLE` | El proxy no puede hablar con Zot. | Comprobar que Zot está en marcha. |
 | 500 | (sin código OCI) | Error interno no contemplado. | Ver el traceback en el log del proxy. |
 
@@ -25,14 +25,15 @@ el error es `MANIFEST_UNKNOWN`. Revisa el tipo de tag en
 
 ### "unknown" (502) al pedir una versión exacta
 
-Si pides un tag **exacto** que no existe en el upstream, el proxy intenta
-descargarlo y `skopeo` falla. El cliente recibe `UNKNOWN` (502), no
-`MANIFEST_UNKNOWN`. Es un comportamiento actual del sistema.
+Si pides un tag **exacto** que no existe en el upstream, el proxy no lo comprueba
+antes: se lo pide a Zot, que intenta la descarga bajo demanda y falla. El error que
+recibe el cliente lo devuelve Zot, y puede no coincidir con `MANIFEST_UNKNOWN`.
+Este comportamiento está pendiente de comprobar con un Zot real.
 
-Para comprobarlo:
+Para revisar el motivo, mira el log de Zot:
 
 ```bash
-journalctl --user -u proxy.service --since "10 min ago" | grep -i skopeo
+journalctl --user -u zot.service --since "10 min ago"
 ```
 
 ### "denied" al pedir una imagen
