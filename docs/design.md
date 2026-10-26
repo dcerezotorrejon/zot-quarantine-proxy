@@ -66,9 +66,10 @@ registro público y, en segundo plano, se copia a
 
 - `refs(registry, path, reference, last_requested)`: tags pedidos por los
   clientes. Sirven para saber qué mantener fresco.
-- `quarantine(registry, path, digest, quarantined_at)`: cuándo entró cada digest
-  en cuarentena. Sirve para contar los días. La identidad es el digest
-  (inmutable), no el tag.
+- `quarantine(registry, path, digest, quarantined_at, published_at)`: cuándo entró
+  cada digest en cuarentena y su fecha de build en el origen (`Created`). El plazo
+  de cuarentena se cuenta desde `published_at` cuando se conoce; si no, desde
+  `quarantined_at`. La identidad es el digest (inmutable), no el tag.
 - `quarantine_refs(registry, path, digest, reference)`: qué tag de cliente
   satisface cada digest en cuarentena. Se usa al promover para re-apuntar el tag.
 
@@ -142,8 +143,9 @@ que siguen en cuarentena (p. ej. un tag verificado que movió a otro digest).
    upstream ya no publica bajo ninguna ref pedida.
 3. **Actualizar firmas ClamAV** (`clamav.py`): ejecuta `freshclam` para mantener
    al día la base de firmas, antes de promover.
-4. **Promover** (`promoter.py`): si un digest lleva al menos `QUARANTINE_DAYS` en
-   cuarentena, no tiene CVEs con severidad en `CVE_SEVERITY_THRESHOLD` (según
+4. **Promover** (`promoter.py`): si un digest tiene al menos `QUARANTINE_DAYS` de
+   antigüedad (fecha de build en el origen; si no se conoce, desde su entrada en
+   cuarentena), no tiene CVEs con severidad en `CVE_SEVERITY_THRESHOLD` (según
    `zli cve list`) y ClamAV no detecta malware, lo copia a `verified` re-apuntando
    cada tag de cliente que lo referencia, y lo quita de `quarantine`. Si tiene
    CVEs bloqueantes o malware, lo borra de `quarantine`. Si algún escaneo no está

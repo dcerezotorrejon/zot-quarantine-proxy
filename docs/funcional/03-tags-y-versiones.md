@@ -23,12 +23,13 @@ el digest al que apunta.
 
 `latest` y `stable` son tags móviles: el upstream puede re-apuntarlos a un digest
 nuevo en cualquier momento. Como la cuarentena va por **digest**, cada movimiento
-abre una cuarentena nueva para ese digest (con su propio reloj) y se descarta la
-del digest anterior.
+abre una cuarentena nueva para ese digest (con su propio reloj, contado desde su
+fecha de build) y se descarta la del digest anterior.
 
 Una vez verificado, un tag móvil se sirve desde `verified/` (que tiene
-prioridad), así que **queda por detrás del upstream hasta un ciclo de cuarentena**
-(`QUARANTINE_DAYS`, 7 días por defecto) cada vez que el upstream lo mueve.
+prioridad), así que **queda por detrás del upstream hasta que el nuevo digest
+cumpla el plazo** (`QUARANTINE_DAYS`, 7 días por defecto contados desde su fecha
+de build) cada vez que el upstream lo mueve.
 
 ## Digests
 

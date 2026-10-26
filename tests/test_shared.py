@@ -10,6 +10,7 @@ from pathlib import Path
 from zqp.env import registry_host
 from zqp.image_ref import RepoName, digest_to_tag
 from zqp.malware import _parse_infected, format_infected
+from zqp.skopeo import _parse_created
 from zqp.state import StateStore
 
 
@@ -75,6 +76,22 @@ class StateStoreTests(unittest.TestCase):
             ["2.16.0", "latest"],
         )
 
+    def test_add_quarantine_stores_published_at(self):
+        self.state.add_quarantine(
+            "docker.io", "library/nginx", "sha256:abc", "latest", 100, published_at=50
+        )
+        self.assertEqual(self.state.list_quarantine()[0].published_at, 50)
+
+    def test_clock_start_prefers_published_at(self):
+        self.state.add_quarantine(
+            "docker.io", "library/nginx", "sha256:abc", "latest", 100, published_at=50
+        )
+        self.assertEqual(self.state.list_quarantine()[0].clock_start, 50)
+
+    def test_clock_start_falls_back_to_quarantined_at(self):
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "latest", 100)
+        self.assertEqual(self.state.list_quarantine()[0].clock_start, 100)
+
     def test_distinct_digests_are_distinct_records(self):
         self.state.add_quarantine("docker.io", "library/nginx", "sha256:aaa", "latest", 100)
         self.state.add_quarantine("docker.io", "library/nginx", "sha256:bbb", "latest", 200)
@@ -111,6 +128,22 @@ class StateStoreTests(unittest.TestCase):
         self.assertEqual(self.state.refs_by_repo(), {})
         self.assertEqual(self.state.list_quarantine(), [])
         self.assertEqual(self.state.quarantine_refs_by_repo(), {})
+
+
+class ParseCreatedTests(unittest.TestCase):
+    def test_parses_rfc3339_with_nanoseconds(self):
+        self.assertEqual(_parse_created("2024-05-29T06:55:28.566254104Z"), 1716965728)
+
+    def test_parses_rfc3339_without_fraction(self):
+        self.assertEqual(_parse_created("2024-05-29T06:55:28Z"), 1716965728)
+
+    def test_returns_none_for_empty_or_placeholder(self):
+        for raw in ["", "   ", "<no value>", "<nil>"]:
+            with self.subTest(raw=raw):
+                self.assertIsNone(_parse_created(raw))
+
+    def test_returns_none_for_garbage(self):
+        self.assertIsNone(_parse_created("no-es-una-fecha"))
 
 
 class MalwareFormatTests(unittest.TestCase):

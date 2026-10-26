@@ -19,9 +19,10 @@ Proxy de imágenes de contenedores (pull-through cache) para homelab, basado en
   `quarantine` y lo escanea con ClamAV. Si está limpio, lo promueve a `verified`
   al momento (**vía rápida** para imágenes nuevas, sin CVEs ni plazo).
 - **updater** (Python, Fedora) cada 6 h detecta las actualizaciones (un tag ya
-  verificado que mueve a otro digest) y las somete al **camino largo**: 7 días en
-  cuarentena + escaneo de CVEs (Trivy, opcional) y de malware (ClamAV). También
-  actualiza las firmas de ClamAV, poda lo que nadie usa y limpia la base de datos.
+  verificado que mueve a otro digest) y las somete al **camino largo**: 7 días de
+  antigüedad (desde la build en el origen) + escaneo de CVEs (Trivy, opcional) y
+  de malware (ClamAV). También actualiza las firmas de ClamAV, poda lo que nadie
+  usa y limpia la base de datos.
 
 Ejemplo:
 
@@ -51,12 +52,13 @@ Hay dos caminos para llegar a `verified`:
 - **Imagen nueva** (vía rápida): se escanea con ClamAV en el proxy y, si está
   limpia, se promueve al momento. Sin CVEs ni plazo.
 - **Actualización** (camino largo): un tag verificado que mueve a otro digest
-  espera `QUARANTINE_DAYS` y pasa por CVEs (opcional) y malware.
+  espera a que el nuevo digest tenga `QUARANTINE_DAYS` de antigüedad (desde su
+  fecha de build) y pasa por CVEs (opcional) y malware.
 
 > **Nota:** `latest` es un tag móvil. Una vez verificado se sirve desde
-> `verified`, que tiene prioridad, así que queda por detrás del upstream hasta un
-> ciclo de cuarentena (`QUARANTINE_DAYS`, 7 días por defecto) cada vez que el tag
-> se mueve.
+> `verified`, que tiene prioridad, así que queda por detrás del upstream hasta
+> que el nuevo digest cumpla el plazo (`QUARANTINE_DAYS`, 7 días por defecto
+> contados desde su fecha de build) cada vez que el tag se mueve.
 
 Solo se conservan en `verified` los tags que alguien ha pedido; los que nadie
 pide se podan para no acumular almacenamiento.
@@ -101,7 +103,7 @@ tests/                 tests de la lógica de nombres y del estado de cuarentena
 |---|---|---|---|
 | `ZOT_URL` | proxy, updater | `http://zot:5000` | URL interna de Zot dentro del pod |
 | `UPSTREAM_REGISTRIES` | proxy | `docker.io,ghcr.io,quay.io,registry.k8s.io` | Registros permitidos (allowlist) |
-| `QUARANTINE_DAYS` | updater | `7` | Días en cuarentena antes de promover |
+| `QUARANTINE_DAYS` | updater | `7` | Antigüedad mínima (días desde la build en el origen) antes de promover una actualización |
 | `CVE_SEVERITY_THRESHOLD` | updater | (vacío) | Severidades que bloquean la promoción de actualizaciones. Vacío = no bloquea por CVEs |
 | `CHECK_INTERVAL` | updater | `6h` | Frecuencia del ciclo (formatos `30m`, `6h`, `7d`) |
 | `STATE_DIR` | proxy, updater | `/var/lib/proxy` | Dónde está `state.sqlite3` |

@@ -55,7 +55,7 @@ class Promoter:
         """Evalúa cada digest en cuarentena que ya cumple la edad mínima."""
         now = int(time.time())
         for record in self._state.list_quarantine():
-            if now - record.quarantined_at < self._min_age_seconds:
+            if now - record.clock_start < self._min_age_seconds:
                 continue
             try:
                 self._evaluate(record)

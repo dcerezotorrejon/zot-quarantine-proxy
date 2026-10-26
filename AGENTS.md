@@ -43,10 +43,12 @@ No cambies estas reglas sin confirmarlo con el usuario:
   copia a `quarantine` (si no está ya) para el ciclo de escaneo y promoción.
   `quarantine` no se sirve a los clientes.
 - **Prioridad al servir**: `verified` primero; si no, el upstream.
-- **Plazo y veredicto**: al cumplir `QUARANTINE_DAYS` (7 por defecto), si
-  `zli cve list` no tiene CVEs con severidad en `CVE_SEVERITY_THRESHOLD` la imagen
-  se promueve a `verified`; si los tiene, se **elimina** de cuarentena. Si el
-  escaneo no está listo (PENDING), no se promueve ni se elimina: se reintenta.
+- **Plazo y veredicto**: al cumplir `QUARANTINE_DAYS` (7 por defecto) contados
+  desde la fecha de build (`Created`) de la imagen en el origen, si `zli cve list`
+  no tiene CVEs con severidad en `CVE_SEVERITY_THRESHOLD` la imagen se promueve a
+  `verified`; si los tiene, se **elimina** de cuarentena. Si el escaneo no está
+  listo (PENDING), no se promueve ni se elimina: se reintenta. Si no se puede
+  obtener la fecha de build, el plazo cuenta desde la entrada en cuarentena.
 - **Tags literales**: se reenvía al registro público exactamente el tag pedido
   (`latest`, `1.27`, `1.27.4`, `alpine`…), sin inferir versiones. La cuarentena
   va por **digest**: cada digest se guarda en `quarantine/` bajo un tag

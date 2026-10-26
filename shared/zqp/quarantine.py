@@ -28,6 +28,11 @@ def ensure_quarantined(
     (``sha256-<hex>``), para que cada digest tenga su propio reloj. Si el digest
     ya está en Zot, solo se registra el estado; si no, se copia del upstream.
 
+    Al copiar un digest nuevo se obtiene su fecha de build (``Created``) desde la
+    copia local, que conserva el ``created`` del config del origen. Ese instante
+    marca el inicio del plazo de cuarentena; si no se puede obtener, el plazo
+    cuenta desde la entrada en cuarentena.
+
     Args:
         zot: Cliente de la API de Zot.
         registry_host: Host y puerto de Zot para skopeo.
@@ -41,12 +46,22 @@ def ensure_quarantined(
         SkopeoError: Si la copia falla. En ese caso no se registra nada.
     """
     tag = digest_to_tag(digest)
+    published_at = None
     if zot.get_digest(repo.physical(QUARANTINE), tag) is None:
         source = f"{repo.upstream_image}:{reference}"
         destination = zot_reference(registry_host, repo.physical(QUARANTINE), tag)
         logger.info("Descargando %s a cuarentena (digest %s)", source, digest)
         skopeo.copy(source, destination)
-    state.add_quarantine(repo.registry, repo.path, digest, reference, now or int(time.time()))
+        published_at = skopeo.inspect_created(destination)
+        if published_at is None:
+            logger.debug(
+                "Sin fecha de build para %s@%s; el plazo contará desde la entrada",
+                repo.upstream_image,
+                digest,
+            )
+    state.add_quarantine(
+        repo.registry, repo.path, digest, reference, now or int(time.time()), published_at
+    )
 
 
 def remove_from_quarantine(zot: ZotApi, state: StateStore, repo: RepoName, digest: str) -> None:

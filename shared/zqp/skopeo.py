@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
+from datetime import datetime
 
 from .env import env_str
 
 COPY_TIMEOUT_SECONDS = 1800
 LIST_TIMEOUT_SECONDS = 120
+
+# skopeo emite nanosegundos (9 dígitos); datetime acepta hasta 6 (microsegundos).
+_RFC3339_FRACTION = re.compile(r"(\.\d{6})\d+")
 
 
 class SkopeoError(RuntimeError):
@@ -78,6 +83,53 @@ def inspect_digest(image_with_tag: str) -> str:
     if not digest.startswith("sha256:"):
         raise SkopeoError(f"Respuesta inesperada de skopeo inspect para {image_with_tag}")
     return digest
+
+
+def inspect_created(image_with_tag: str) -> int | None:
+    """Devuelve la fecha de construcción (``Created``) de una imagen, en segundos epoch.
+
+    Lee el campo ``Created`` del config de la imagen. En imágenes multi-arch,
+    ``skopeo inspect`` devuelve el de la instancia que coincide con la plataforma
+    del host. Si no se puede obtener (imagen sin ``Created``, índice sin instancia
+    local o fallo de skopeo), devuelve ``None`` para que el llamador use un reloj
+    alternativo.
+
+    Args:
+        image_with_tag: Referencia completa con tag, p. ej.
+            ``zot:5000/quarantine/docker.io/library/nginx:sha256-abc``.
+
+    Returns:
+        Fecha de construcción en segundos epoch, o ``None`` si no está disponible.
+    """
+    try:
+        output = _run(
+            ["inspect", "--format", "{{.Created}}", f"docker://{image_with_tag}"],
+            LIST_TIMEOUT_SECONDS,
+        )
+    except SkopeoError:
+        return None
+    return _parse_created(output)
+
+
+def _parse_created(raw: str) -> int | None:
+    """Convierte la salida de ``{{.Created}}`` de skopeo a segundos epoch, o None.
+
+    Args:
+        raw: Salida cruda del comando ``inspect --format {{.Created}}``.
+
+    Returns:
+        Segundos epoch, o ``None`` si la salida no es una fecha válida.
+    """
+    value = raw.strip()
+    if not value or value.startswith("<"):
+        return None
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    value = _RFC3339_FRACTION.sub(r"\1", value)
+    try:
+        return int(datetime.fromisoformat(value).timestamp())
+    except ValueError:
+        return None
 
 
 def _run(args: list[str], timeout: int) -> str:

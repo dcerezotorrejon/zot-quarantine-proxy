@@ -20,7 +20,7 @@ Se definen en los quadlets de `~/.config/containers/systemd/`.
 
 | Variable | Por defecto | Qué controla |
 |---|---|---|
-| `QUARANTINE_DAYS` | `7` | Días mínimos en cuarentena antes de promover. |
+| `QUARANTINE_DAYS` | `7` | Antigüedad mínima (días desde la build en el origen) antes de promover una actualización. |
 | `CVE_SEVERITY_THRESHOLD` | (vacío) | Severidades que impiden la promoción de actualizaciones. Vacío = no bloquea por CVEs. |
 | `CHECK_INTERVAL` | `6h` | Frecuencia del ciclo. Formatos: `30m`, `6h`, `7d`. |
 | `LOG_LEVEL` | `INFO` | Detalle de los logs. |

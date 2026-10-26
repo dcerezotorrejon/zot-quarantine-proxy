@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS quarantine (
     path TEXT NOT NULL,
     digest TEXT NOT NULL,
     quarantined_at INTEGER NOT NULL,
+    published_at INTEGER,
     PRIMARY KEY (registry, path, digest)
 );
 CREATE TABLE IF NOT EXISTS quarantine_refs (
@@ -41,12 +42,22 @@ CREATE TABLE IF NOT EXISTS quarantine_refs (
 
 @dataclass(frozen=True)
 class QuarantineRecord:
-    """Un digest en cuarentena y el momento en que entró."""
+    """Un digest en cuarentena, cuándo entró y cuándo se publicó en el origen."""
 
     registry: str
     path: str
     digest: str
     quarantined_at: int
+    published_at: int | None
+
+    @property
+    def clock_start(self) -> int:
+        """Instante desde el que cuenta el plazo de cuarentena.
+
+        Devuelve la fecha de build de la imagen si se conoce; si no, el instante
+        en que el digest entró en cuarentena.
+        """
+        return self.published_at if self.published_at is not None else self.quarantined_at
 
 
 class StateStore:
@@ -62,6 +73,13 @@ class StateStore:
         self._db_path = db_path
         with self._connect() as connection:
             connection.executescript(_SCHEMA)
+            self._migrate(connection)
+
+    def _migrate(self, connection: sqlite3.Connection) -> None:
+        """Aplica migraciones ligeras a bases de datos ya existentes."""
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(quarantine)")}
+        if "published_at" not in columns:
+            connection.execute("ALTER TABLE quarantine ADD COLUMN published_at INTEGER")
 
     def upsert_ref(self, registry: str, path: str, reference: str) -> None:
         """Registra una petición de tag y actualiza su última fecha de uso.
@@ -128,12 +146,18 @@ class StateStore:
             )
 
     def add_quarantine(
-        self, registry: str, path: str, digest: str, reference: str, quarantined_at: int
+        self,
+        registry: str,
+        path: str,
+        digest: str,
+        reference: str,
+        quarantined_at: int,
+        published_at: int | None = None,
     ) -> None:
         """Registra un digest en cuarentena y la referencia de cliente que satisface.
 
-        Si el digest ya estaba en cuarentena, se conserva su fecha de entrada
-        original y solo se añade la nueva referencia.
+        Si el digest ya estaba en cuarentena, se conserva su fila original (fecha
+        de entrada y de publicación) y solo se añade la nueva referencia.
 
         Args:
             registry: Registro upstream.
@@ -141,12 +165,15 @@ class StateStore:
             digest: Digest del manifest, p. ej. ``sha256:abc…``.
             reference: Tag de cliente que debe apuntar a ese digest al promover.
             quarantined_at: Instante de entrada, en segundos epoch.
+            published_at: Fecha de build en el origen, en segundos epoch, o None
+                si no se conoce (entonces el plazo contará desde la entrada).
         """
         with self._connect() as connection:
             connection.execute(
-                "INSERT OR IGNORE INTO quarantine (registry, path, digest, quarantined_at) "
-                "VALUES (?, ?, ?, ?)",
-                (registry, path, digest, quarantined_at),
+                "INSERT OR IGNORE INTO quarantine "
+                "(registry, path, digest, quarantined_at, published_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (registry, path, digest, quarantined_at, published_at),
             )
             connection.execute(
                 "INSERT OR IGNORE INTO quarantine_refs (registry, path, digest, reference) "
@@ -162,10 +189,12 @@ class StateStore:
         """
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT registry, path, digest, quarantined_at FROM quarantine"
+                "SELECT registry, path, digest, quarantined_at, published_at FROM quarantine"
             ).fetchall()
         return [
-            QuarantineRecord(row["registry"], row["path"], row["digest"], row["quarantined_at"])
+            QuarantineRecord(
+                row["registry"], row["path"], row["digest"], row["quarantined_at"], row["published_at"]
+            )
             for row in rows
         ]
 

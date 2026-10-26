@@ -34,11 +34,16 @@ El plazo solo aplica a las **actualizaciones**. Las imágenes nuevas se promueve
 al momento por la vía rápida (solo ClamAV), sin esperar el plazo.
 
 - Por defecto, **7 días** (`QUARANTINE_DAYS`).
-- El plazo cuenta desde el momento en que el **digest** entra en cuarentena, no
-  desde la fecha en que el upstream publicó el tag.
+- El plazo cuenta desde la fecha de **build** de la imagen en el origen (el campo
+  `Created` de su config), no desde que entró en cuarentena. Así una imagen
+  publicada hace tiempo no vuelve a "madurar" cuando el proxy la descarga por
+  primera vez.
+- Si no se puede obtener esa fecha (imagen sin `Created`, fallo de skopeo…), el
+  plazo cuenta desde la entrada en cuarentena.
 - Cada digest tiene su propio reloj: un tag móvil que cambia de digest abre una
-  cuarentena nueva y no hereda el plazo de la anterior.
-- Un digest que lleva menos días no se evalúa aunque ya esté escaneado.
+  cuarentena nueva para ese digest. Si el nuevo digest ya es antiguo, puede
+  promoverse antes de los 7 días.
+- Un digest que aún no cumple el plazo no se evalúa aunque ya esté escaneado.
 
 ## Cuándo se ejecuta el mantenimiento
 
