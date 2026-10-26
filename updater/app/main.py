@@ -39,8 +39,8 @@ def build_cycle(settings: Settings, zot: ZotApi, state: StateStore) -> list[Step
     """
     host = settings.zot_registry_host
     scanner = CveScanner(settings.zli_bin, settings.zot_url, settings.cve_severities)
-    malware = MalwareScanner(host, settings.umoci_bin, settings.clamscan_bin)
-    clamav = ClamavUpdater(settings.freshclam_bin)
+    malware = MalwareScanner(host, settings.umoci_bin, settings.clamdscan_bin, settings.clamd_config)
+    clamav = ClamavUpdater(settings.freshclam_bin, settings.clamdscan_bin, settings.clamd_config)
     promoter = Promoter(state, zot, scanner, malware, host, settings.quarantine_days)
     return [
         ("limpieza de estado", StateCleaner(state, zot).run),

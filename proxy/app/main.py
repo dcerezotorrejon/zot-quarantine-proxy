@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     zot = ZotApi(settings.zot_url)
     state = StateStore(settings.state_dir / "state.sqlite3")
-    malware = MalwareScanner(settings.zot_registry_host, settings.umoci_bin, settings.clamscan_bin)
+    malware = MalwareScanner(settings.zot_registry_host, settings.umoci_bin, settings.clamdscan_bin, settings.clamd_config)
     app.state.service = ImageService(settings, zot, state, malware)
     app.state.zot = ZotForwarder(settings.zot_url)
     app.state.upstream = UpstreamForwarder()

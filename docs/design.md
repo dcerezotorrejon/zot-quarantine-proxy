@@ -14,7 +14,7 @@ Se despliega con Podman rootless y quadlets.
 | Tema | Decisión |
 |---|---|
 | Primera petición | Si no está en `verified`, se sirve del upstream; en segundo plano se copia a `quarantine` y se escanea con ClamAV (vía rápida). |
-| Escaneo | Malware con ClamAV (proxy, vía rápida, y updater). CVEs con `zli` + Trivy embebido en Zot (solo updater, opcional). |
+| Escaneo | Malware con ClamAV (daemon `clamd`, en proxy y updater). CVEs con `zli` + Trivy embebido en Zot (solo updater, opcional). |
 | Imagen de Zot | `ghcr.io/project-zot/zot:latest` (full). No `zot-minimal`: no trae search ni CVEs. |
 | Namespaces | Dos namespaces en un único Zot: `verified` y `quarantine`. |
 | Topología | Pod `zot-quarantine-proxy` con los tres contenedores. Nombres resolubles con `AddHost` (ver §3). |
@@ -144,7 +144,8 @@ que siguen en cuarentena (p. ej. un tag verificado que movió a otro digest).
    `q-<hex>` y registra la ref. Quita de `quarantine` los digests que el
    upstream ya no publica bajo ninguna ref pedida.
 3. **Actualizar firmas ClamAV** (`clamav.py`): ejecuta `freshclam` para mantener
-   al día la base de firmas, antes de promover.
+   al día la base de firmas y recarga el daemon `clamd` para que use la base
+   recién actualizada, antes de promover.
 4. **Promover** (`promoter.py`): si un digest tiene al menos `QUARANTINE_DAYS` de
    antigüedad (fecha de build en el origen; si no se conoce, desde su entrada en
    cuarentena), no tiene CVEs con severidad en `CVE_SEVERITY_THRESHOLD` (según

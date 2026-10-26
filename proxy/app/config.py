@@ -16,7 +16,8 @@ class Settings:
     upstream_registries: frozenset[str]
     state_dir: Path
     umoci_bin: str
-    clamscan_bin: str
+    clamdscan_bin: str
+    clamd_config: str
     log_level: str
 
     @classmethod
@@ -31,7 +32,8 @@ class Settings:
             upstream_registries=env_list("UPSTREAM_REGISTRIES", DEFAULT_UPSTREAM_REGISTRIES),
             state_dir=Path(env_str("STATE_DIR", "/var/lib/proxy")),
             umoci_bin=env_str("UMOCI_BIN", "umoci"),
-            clamscan_bin=env_str("CLAMSCAN_BIN", "clamscan"),
+            clamdscan_bin=env_str("CLAMDSCAN_BIN", "clamdscan"),
+            clamd_config=env_str("CLAMD_CONFIG", "/etc/clamd.d/scan.conf"),
             log_level=env_str("LOG_LEVEL", "INFO").upper(),
         )
 

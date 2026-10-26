@@ -61,7 +61,8 @@ class ImageServiceTests(unittest.TestCase):
             upstream_registries=frozenset({"docker.io"}),
             state_dir=Path(self._tmp.name),
             umoci_bin="umoci",
-            clamscan_bin="clamscan",
+            clamdscan_bin="clamdscan",
+            clamd_config="/etc/clamd.d/scan.conf",
             log_level="INFO",
         )
 

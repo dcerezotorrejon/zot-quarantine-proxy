@@ -19,7 +19,8 @@ class Settings:
     check_interval_seconds: int
     zli_bin: str
     umoci_bin: str
-    clamscan_bin: str
+    clamdscan_bin: str
+    clamd_config: str
     freshclam_bin: str
     log_level: str
 
@@ -44,7 +45,8 @@ class Settings:
             check_interval_seconds=env_duration_seconds("CHECK_INTERVAL", "6h"),
             zli_bin=env_str("ZLI_BIN", "zli"),
             umoci_bin=env_str("UMOCI_BIN", "umoci"),
-            clamscan_bin=env_str("CLAMSCAN_BIN", "clamscan"),
+            clamdscan_bin=env_str("CLAMDSCAN_BIN", "clamdscan"),
+            clamd_config=env_str("CLAMD_CONFIG", "/etc/clamd.d/scan.conf"),
             freshclam_bin=env_str("FRESHCLAM_BIN", "freshclam"),
             log_level=env_str("LOG_LEVEL", "INFO").upper(),
         )

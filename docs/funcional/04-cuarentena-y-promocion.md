@@ -54,7 +54,7 @@ El updater ejecuta un ciclo al arrancar y después cada **6 horas**
    cuarentenas cuyo digest ya no está en Zot.
 2. **Sincronizar con el upstream**: para cada tag pedido, si el digest al que
    apunta ahora es nuevo, lo descarga a cuarentena.
-3. **Actualizar las firmas de ClamAV** con `freshclam`.
+3. **Actualizar las firmas de ClamAV** con `freshclam` (y recargarlas en `clamd`).
 4. **Promover** los digests que cumplen el plazo y pasan los escaneos de CVEs y
    malware.
 5. **Retener**: conserva los tags de `verified/` que alguien pide y poda el resto.
@@ -92,8 +92,8 @@ encontrados. La imagen sigue esperando a que el escaneo de Zot termine (~15 min)
 El escaneo de malware se hace en los dos caminos:
 
 - **Vía rápida (proxy)**: en cuanto se copia a cuarentena, el proxy desempaqueta
-  la imagen (con `umoci`) y la escanea con **ClamAV**. Si está limpia, la promueve
-  al momento.
+  la imagen (con `umoci`) y la escanea con **ClamAV** (daemon `clamd`). Si está
+  limpia, la promueve al momento.
 - **Camino largo (updater)**: si el digest sigue en cuarentena al cumplir el
   plazo, el updater repite el escaneo antes de promover.
 
@@ -108,8 +108,9 @@ El veredicto puede ser:
 Igual que con los CVEs: si se detecta malware, la imagen no se promueve; se elimina.
 
 La base de firmas de ClamAV se actualiza con `freshclam` en cada ciclo de
-mantenimiento (justo antes de promover). Si `freshclam` falla, se registra un
-aviso y el escaneo continúa con la base de firmas disponible.
+mantenimiento (justo antes de promover) y se recarga en el daemon `clamd` para
+que use la base recién actualizada. Si `freshclam` falla, se registra un aviso y
+el escaneo continúa con la base de firmas disponible.
 
 ## Qué pasa con una imagen vulnerable
 
