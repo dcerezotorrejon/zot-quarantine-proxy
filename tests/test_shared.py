@@ -43,11 +43,11 @@ class RepoNameTests(unittest.TestCase):
 
 
 class DigestToTagTests(unittest.TestCase):
-    def test_replaces_colon_with_dash(self):
-        self.assertEqual(digest_to_tag("sha256:abc123"), "sha256-abc123")
+    def test_uses_q_prefix_and_strips_algorithm(self):
+        self.assertEqual(digest_to_tag("sha256:abc123"), "q-abc123")
 
-    def test_only_first_colon(self):
-        self.assertEqual(digest_to_tag("sha256:ab:cd"), "sha256-ab:cd")
+    def test_strips_only_the_algorithm(self):
+        self.assertEqual(digest_to_tag("sha256:ab:cd"), "q-ab:cd")
 
 
 class StateStoreTests(unittest.TestCase):

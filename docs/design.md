@@ -54,7 +54,7 @@ en 5000 y el proxy en 5001. El orden de arranque se controla con `Requires=` y
 ### Zot
 
 - `verified/<registro>/<repo>:<tag>`: lo que se considera seguro.
-- `quarantine/<registro>/<repo>:<sha256-<hex>>`: cada digest en espera de escaneo
+- `quarantine/<registro>/<repo>:<q-<hex>>`: cada digest en espera de escaneo
   y de los días de cuarentena, guardado bajo un tag derivado de su propio digest.
   No se sirve a los clientes.
 
@@ -62,7 +62,7 @@ Ejemplo: `docker pull <servidor>:5001/docker.io/library/nginx:1.27` se mira
 primero en `verified/docker.io/library/nginx`. Si el tag no está, se sirve del
 registro público y, en segundo plano, se copia a
 `quarantine/docker.io/library/nginx` el digest al que apunta, bajo su tag
-`sha256-<hex>`.
+`q-<hex>`.
 
 ### SQLite (`state.sqlite3`, compartido por proxy y updater)
 
@@ -104,7 +104,7 @@ Flujo para un manifest:
    tag está en `verified`, se sirve de ahí.
 4. Si el tag no está en `verified`, servir la imagen del registro público
    (reenvío con token anónimo) y, en segundo plano, copiar a `quarantine` el
-   digest al que apunta ese tag (bajo su tag `sha256-<hex>`), escanearlo con
+   digest al que apunta ese tag (bajo su tag `q-<hex>`), escanearlo con
    ClamAV y, si está limpio, promoverlo a `verified` al momento (**vía rápida**,
    sin CVEs ni plazo). El proxy sirve el cuerpo en streaming desde el origen, sin
    serializar descargas.
@@ -141,7 +141,7 @@ que siguen en cuarentena (p. ej. un tag verificado que movió a otro digest).
 2. **Sincronizar upstream** (`upstream_sync.py`): para cada ref pedida, mira el
    digest actual de ese tag en el upstream; si es un digest nuevo (no está en
    `verified` ni en `quarantine`), lo baja a `quarantine` bajo su tag
-   `sha256-<hex>` y registra la ref. Quita de `quarantine` los digests que el
+   `q-<hex>` y registra la ref. Quita de `quarantine` los digests que el
    upstream ya no publica bajo ninguna ref pedida.
 3. **Actualizar firmas ClamAV** (`clamav.py`): ejecuta `freshclam` para mantener
    al día la base de firmas, antes de promover.

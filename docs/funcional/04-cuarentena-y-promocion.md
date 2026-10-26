@@ -20,7 +20,7 @@ pedido por un cliente
    │ no
    ▼
 se sirve del upstream; en segundo plano se copia a quarantine/
-el digest (tag sha256-<hex>) y se escanea con ClamAV
+el digest (tag q-<hex>) y se escanea con ClamAV
    │
    ├── imagen NUEVA: ClamAV limpio ──► se promueve al momento (vía rápida)
    │

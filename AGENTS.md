@@ -52,7 +52,7 @@ No cambies estas reglas sin confirmarlo con el usuario:
 - **Tags literales**: se reenvía al registro público exactamente el tag pedido
   (`latest`, `1.27`, `1.27.4`, `alpine`…), sin inferir versiones. La cuarentena
   va por **digest**: cada digest se guarda en `quarantine/` bajo un tag
-  `sha256-<hex>` con su propio reloj, y al promover se re-apunta el tag en
+  `q-<hex>` con su propio reloj, y al promover se re-apunta el tag en
   `verified`.
 - **Retención**: en `verified` solo se conservan los tags que alguien ha pedido;
   el resto se poda. Un tag móvil (p. ej. `latest`) que el upstream cambia abre
@@ -101,7 +101,7 @@ El directorio `.venv/` está en `.gitignore`.
           digest: Digest del manifest, p. ej. ``sha256:abc…``.
 
       Returns:
-          El tag derivado, p. ej. ``sha256-abc…``.
+          El tag derivado, p. ej. ``q-abc…``.
       """
   ```
 

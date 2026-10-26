@@ -49,7 +49,7 @@ def export_dir(image_with_tag: str, dest_dir: str) -> None:
     ``umoci`` pueda desempaquetar un manifest único aunque la imagen sea multi-arch.
 
     Args:
-        image_with_tag: Imagen con tag, p. ej. ``zot:5000/quarantine/...:sha256-...``.
+        image_with_tag: Imagen con tag, p. ej. ``zot:5000/quarantine/...:q-...``.
         dest_dir: Directorio destino. Se crea en él un layout OCI etiquetado ``latest``.
 
     Raises:
@@ -96,7 +96,7 @@ def inspect_created(image_with_tag: str) -> int | None:
 
     Args:
         image_with_tag: Referencia completa con tag, p. ej.
-            ``zot:5000/quarantine/docker.io/library/nginx:sha256-abc``.
+            ``zot:5000/quarantine/docker.io/library/nginx:q-abc``.
 
     Returns:
         Fecha de construcción en segundos epoch, o ``None`` si no está disponible.

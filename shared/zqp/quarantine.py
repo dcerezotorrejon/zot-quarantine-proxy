@@ -25,7 +25,7 @@ def ensure_quarantined(
     """Asegura que un digest esté en cuarentena y registrado bajo una referencia.
 
     El digest se guarda en ``quarantine/`` bajo un tag derivado de él mismo
-    (``sha256-<hex>``), para que cada digest tenga su propio reloj. Si el digest
+    (``q-<hex>``), para que cada digest tenga su propio reloj. Si el digest
     ya está en Zot, solo se registra el estado; si no, se copia del upstream.
 
     Al copiar un digest nuevo se obtiene su fecha de build (``Created``) desde la

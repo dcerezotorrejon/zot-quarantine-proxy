@@ -50,7 +50,7 @@ class StateCleaner:
 
         Args:
             repo: Repositorio upstream.
-            quarantined_tags: Tags ``sha256-<hex>`` que Zot tiene en ``quarantine``.
+            quarantined_tags: Tags ``q-<hex>`` que Zot tiene en ``quarantine``.
         """
         present = set(quarantined_tags)
         for record in self._state.list_quarantine():
@@ -77,7 +77,7 @@ class StateCleaner:
             repo: Repositorio upstream.
             references: Tags pedidos por los clientes para ese repositorio.
             verified: Tags que Zot tiene actualmente en ``verified``.
-            quarantined_tags: Tags ``sha256-<hex>`` que Zot tiene en ``quarantine``.
+            quarantined_tags: Tags ``q-<hex>`` que Zot tiene en ``quarantine``.
         """
         active = set(verified)
         quarantine_tags = set(quarantined_tags)

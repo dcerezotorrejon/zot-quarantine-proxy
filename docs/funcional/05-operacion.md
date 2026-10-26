@@ -56,14 +56,14 @@ curl -s http://localhost:5000/v2/verified/docker.io/library/nginx/tags/list
 curl -s http://localhost:5000/v2/quarantine/docker.io/library/nginx/tags/list
 ```
 
-En `quarantine/` los tags son `sha256-<hex>` (el digest de la imagen), no los
+En `quarantine/` los tags son `q-<hex>` (el digest de la imagen), no los
 tags que pidió el cliente.
 
 ## Qué significan los mensajes
 
 | Mensaje | Significado | Qué hacer |
 |---|---|---|
-| `Descargando … a cuarentena (digest …)` | Un digest nuevo se copia a cuarentena bajo su tag `sha256-<hex>`. | Nada. |
+| `Descargando … a cuarentena (digest …)` | Un digest nuevo se copia a cuarentena bajo su tag `q-<hex>`. | Nada. |
 | `Escaneo pendiente para …` | Zot aún no tiene el resultado de CVEs. | Nada. Se reintenta. |
 | `Eliminado … al terminar la cuarentena por CVEs: …` | Al cumplir el plazo el digest tenía CVEs bloqueantes. Se ha borrado de la cuarentena. | Revisar los IDs. Ver [04](04-cuarentena-y-promocion.md#qué-pasa-con-una-imagen-vulnerable). |
 | `Escaneo de malware pendiente para …` | No se pudo desempaquetar o escanear la imagen con ClamAV. | Nada. Se reintenta. |

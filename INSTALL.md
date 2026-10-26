@@ -163,6 +163,14 @@ podman build -t localhost/zot-updater:latest -f updater/Containerfile .
 > `verified/` y `quarantine/` quedan intactas. Solo se pierde el estado —las refs
 > pedidas y los plazos de cuarentena—, que vuelven a contar desde cero.
 
+> **Nota: el tag de cuarentena cambia de `sha256-<hex>` a `q-<hex>`.** El
+> prefijo `sha256-` choca con el esquema de *referrers tags* de OCI, que Zot no
+> indexa en la búsqueda y por eso la web no mostraba la cuarentena. **No requiere
+> purgar el estado** (el estado se identifica por digest, no por tag): al
+> siguiente ciclo el updater re-descarga bajo `q-<hex>` cada digest que estuviera
+> en cuarentena —su reloj vuelve a empezar— y el tag viejo `sha256-<hex>` queda
+> en Zot como un tag obsoleto e invisible (no ocupa espacio extra por el dedupe).
+
 ```bash
 systemctl --user restart proxy.service updater.service
 ```
