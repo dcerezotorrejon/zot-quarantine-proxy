@@ -9,24 +9,20 @@ y Docker muestran el mensaje tal cual. Esta tabla explica cada código y qué ha
 |---|---|---|---|
 | 400 | `NAME_INVALID` | El nombre tiene formato incorrecto: barras dobles, barra final o vacío. | Revisar la ruta de la imagen. |
 | 403 | `DENIED` | El registro de origen no está en `UPSTREAM_REGISTRIES`. | Añadir el registro a la lista, o usar otro. |
-| 404 | `MANIFEST_UNKNOWN` | No existe ningún tag que cumpla la petición (parcial o flotante). | Comprobar que el tag existe en el registro original. |
-| 502 | `UNKNOWN` | Falló la consulta de tags del upstream (`skopeo list-tags`) al resolver un tag flotante o parcial, o falló el token anónimo del upstream. | Ver el mensaje en el log del proxy. |
+| 404 | `MANIFEST_UNKNOWN` | El tag pedido no existe en el registro original (el upstream responde 404 y se reenvía tal cual). | Comprobar que el tag existe en el registro original. |
+| 502 | `UNKNOWN` | Falló el reenvío al registro público, o el token anónimo del upstream. | Ver el mensaje en el log del proxy. |
 | 503 | `UNAVAILABLE` | El proxy no puede hablar con Zot. | Comprobar que Zot está en marcha. |
 | 500 | (sin código OCI) | Error interno no contemplado. | Ver el traceback en el log del proxy. |
 
 ## Casos frecuentes
 
-### "manifest unknown" con un tag que sí existe en Docker Hub
+### "manifest unknown" con un tag que no existe
 
-Si pides un tag **parcial o flotante** y el upstream no tiene ninguno que cumpla,
-el error es `MANIFEST_UNKNOWN`. Revisa el tipo de tag en
+Con tags literales no hay resolución previa: el proxy reenvía el tag tal cual al
+registro público. Si ese tag no existe, el upstream responde `404 MANIFEST_UNKNOWN`
+(o su equivalente) y el proxy lo reenvía tal cual al cliente. Asegúrate de que el
+tag existe exactamente (los tags distinguen mayúsculas y minúsculas). Ver
 [03 · Tags y versiones](03-tags-y-versiones.md).
-
-### "manifest unknown" al pedir una versión exacta
-
-Si pides un tag **exacto** que no existe en el upstream, el proxy lo reenvía al
-registro público y este responde `404 MANIFEST_UNKNOWN` (o su equivalente), que se
-reenvía tal cual al cliente. El mensaje exacto depende del upstream.
 
 ### "denied" al pedir una imagen
 

@@ -1,61 +1,43 @@
 # 03 · Tags y versiones
 
-El tag es la parte que va detrás de los dos puntos (`:1.27`). El sistema lo
-clasifica en uno de cuatro tipos y decide qué versión concreta servir.
+Todos los tags se sirven de forma **literal**: el proxy reenvía al registro
+público exactamente el tag que pide el cliente. No interpreta versiones: no
+resuelve `latest` a "la mayor versión" ni `1.27` a "la mayor `1.27.x`". El
+resultado es el que devuelve el registro público.
 
-## Los cuatro tipos
+## Cómo se sirve un tag
 
-| Tipo | Ejemplos | Qué se sirve |
-|---|---|---|
-| **Exacto** | `1.27.4`, `1.27.4-alpine` | Esa versión. Si no existe, se descarga tal cual. |
-| **Parcial** | `1`, `1.27` | La versión más alta que empieza por ese prefijo. |
-| **Flotante** | `latest`, `stable` | La versión verificada más alta. |
-| **Literal** | `alpine`, `bookworm` | El tag exacto con ese nombre. No se interpreta como versión. |
+La prioridad es siempre la misma: si el tag está en `verified/`, se sirve de
+local; si no, se sirve del upstream y, en segundo plano, se copia a cuarentena
+el digest al que apunta.
 
-## Ejemplos con un caso concreto
+| Pedido | Qué se sirve |
+|---|---|
+| `nginx:1.27.4` | Ese tag. De `verified/` si ya está verificado; si no, del upstream (y se copia a cuarentena en segundo plano). |
+| `nginx:1.27` | Ese tag literal, tal como lo publica el upstream. No es "la mayor `1.27.x`". |
+| `nginx:latest` / `stable` | Ese tag literal, tal como lo publica el upstream. |
+| `nginx:alpine` / `bookworm` | Ese tag literal. |
+| `nginx@sha256:…` | Esa imagen por digest. De `verified/` si está; si no, del upstream. No pasa por cuarentena. |
 
-Supón que el almacén tiene verificadas estas versiones de `nginx`:
+## Tags móviles y el plazo de cuarentena
 
-```
-1.26.9   1.27.3   1.27.4   2.0.0   2.1.0
-```
+`latest` y `stable` son tags móviles: el upstream puede re-apuntarlos a un digest
+nuevo en cualquier momento. Como la cuarentena va por **digest**, cada movimiento
+abre una cuarentena nueva para ese digest (con su propio reloj) y se descarta la
+del digest anterior.
 
-| Pedido | Se sirve | Por qué |
-|---|---|---|
-| `1.27.3` | `1.27.3` | Exacto: esa versión. |
-| `1.27` | `1.27.4` | Parcial: la 1.27 más alta. |
-| `1` | `1.27.4` | Parcial: la 1.x más alta. Aquí `2.x` no cuenta. |
-| `latest` | `2.1.0` | Flotante: la más alta de todas las verificadas. |
-
-## Sufijos
-
-Un tag con sufijo, como `1.27.4-alpine`, es una variante distinta de la versión.
-
-- Un pedido **exacto** con sufijo (`1.27.4-alpine`) se sirve tal cual.
-- Los pedidos **parciales y flotantes** ignoran los tags con sufijo. Por eso
-  `latest` no devuelve `2.1.0-alpine` aunque exista.
+Una vez verificado, un tag móvil se sirve desde `verified/` (que tiene
+prioridad), así que **queda por detrás del upstream hasta un ciclo de cuarentena**
+(`QUARANTINE_DAYS`, 7 días por defecto) cada vez que el upstream lo mueve.
 
 ## Digests
 
 Un pedido por digest (`nginx@sha256:…`) se sirve de `verified/` si ese contenido
-ya está allí; si no, se sirve del upstream. Al no tener tag, el digest no se copia
-a cuarentena ni se promueve.
+ya está allí; si no, se sirve del upstream. Al no llevar tag, el digest no se
+copia a cuarentena ni se promueve.
 
-## Tags que no son versiones
+## Qué se conserva
 
-Los tags como `alpine` o `bookworm` se tratan como literales: se sirven tal cual.
-Si el repositorio no tiene ningún tag con formato de versión, `latest` apunta al
-tag literal `latest` si existe.
-
-## Qué versiones se conservan
-
-El almacén no guarda todas las versiones que han existido. Solo conserva:
-
-- Una versión por cada tag parcial o flotante que alguien haya pedido.
-- Cualquier tag exacto que alguien haya pedido.
-- Todos los tags que no son versiones (`alpine`, etc.).
-
-Las demás versiones semver se borran en el ciclo de mantenimiento. Por ejemplo, si
-nadie pide `1.26`, la `1.26.9` se borra en cuanto hay una versión del mismo
-paquete que sí se conserva. Ver
+El almacén conserva en `verified/` los tags que alguien ha pedido. Los tags que
+nadie pide se podan en el ciclo de mantenimiento. Ver
 [04 · Cuarentena y promoción](04-cuarentena-y-promocion.md#qué-se-conserva).

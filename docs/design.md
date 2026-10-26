@@ -13,13 +13,14 @@ Se despliega con Podman rootless y quadlets.
 
 | Tema | Decisión |
 |---|---|
-| Primera petición | Si no está en `verified`, se sirve del upstream y se copia a `quarantine` en segundo plano. |
-| Escaneo | `zli` + Trivy embebido en Zot. Sin servidor ni binario Trivy aparte. |
+| Primera petición | Si no está en `verified`, se sirve del upstream; en segundo plano se copia a `quarantine` y se escanea con ClamAV (vía rápida). |
+| Escaneo | Malware con ClamAV (proxy, vía rápida, y updater). CVEs con `zli` + Trivy embebido en Zot (solo updater, opcional). |
 | Imagen de Zot | `ghcr.io/project-zot/zot:latest` (full). No `zot-minimal`: no trae search ni CVEs. |
 | Namespaces | Dos namespaces en un único Zot: `verified` y `quarantine`. |
 | Topología | Pod `zot-quarantine-proxy` con los tres contenedores. Nombres resolubles con `AddHost` (ver §3). |
 | Despliegue | Podman rootless + quadlets (systemd de usuario) en Fedora. Compose solo para desarrollo. |
 | Puertos | Proxy `5001` (uso normal) y Zot `5000` (acceso directo). Ambos publicados al host. |
+| Multi-arch | Se almacena el índice completo (`--multi-arch all`). El digest de identidad es el del índice; el escaneo de malware extrae solo la plataforma del servidor (`--multi-arch system`). Ver §9. |
 
 ## 3. Topología
 
@@ -51,19 +52,25 @@ en 5000 y el proxy en 5001. El orden de arranque se controla con `Requires=` y
 ### Zot
 
 - `verified/<registro>/<repo>:<tag>`: lo que se considera seguro.
-- `quarantine/<registro>/<repo>:<tag>`: en espera de escaneo y de los días de
-  cuarentena. No se sirve a los clientes.
+- `quarantine/<registro>/<repo>:<sha256-<hex>>`: cada digest en espera de escaneo
+  y de los días de cuarentena, guardado bajo un tag derivado de su propio digest.
+  No se sirve a los clientes.
 
-Ejemplo: `docker pull <servidor>:5001/docker.io/library/nginx:1.27` se resuelve
-contra `verified/docker.io/library/nginx`. Si no está, se sirve del registro
-público y, en segundo plano, se copia a `quarantine/docker.io/library/nginx`.
+Ejemplo: `docker pull <servidor>:5001/docker.io/library/nginx:1.27` se mira
+primero en `verified/docker.io/library/nginx`. Si el tag no está, se sirve del
+registro público y, en segundo plano, se copia a
+`quarantine/docker.io/library/nginx` el digest al que apunta, bajo su tag
+`sha256-<hex>`.
 
 ### SQLite (`state.sqlite3`, compartido por proxy y updater)
 
 - `refs(registry, path, reference, last_requested)`: tags pedidos por los
   clientes. Sirven para saber qué mantener fresco.
-- `quarantine(registry, path, tag, quarantined_at)`: cuándo entró cada tag en
-  cuarentena. Sirve para contar los días.
+- `quarantine(registry, path, digest, quarantined_at)`: cuándo entró cada digest
+  en cuarentena. Sirve para contar los días. La identidad es el digest
+  (inmutable), no el tag.
+- `quarantine_refs(registry, path, digest, reference)`: qué tag de cliente
+  satisface cada digest en cuarentena. Se usa al promover para re-apuntar el tag.
 
 ## 5. Nombres y parseo
 
@@ -90,46 +97,59 @@ Flujo para un manifest:
 1. Parsear el nombre. Rechazar si el registro no está en la allowlist
    (`UPSTREAM_REGISTRIES`).
 2. Si es un digest, servirlo de `verified` si está; si no, del upstream.
-3. Si es un tag, registrar la ref en SQLite y resolver el tag concreto
-   (con `skopeo list-tags` para flotantes y parciales).
-4. Si hay copia en `verified`, servirla desde ahí.
-5. Si no, servir la imagen del registro público (reenvío con token anónimo) y, en
-   segundo plano, copiarla a `quarantine` si no está ya, para el ciclo de escaneo
-   y promoción. El proxy sirve el cuerpo en streaming desde el origen, sin
+3. Si es un tag, registrar la ref en SQLite y servir el tag **literal**: si el
+   tag está en `verified`, se sirve de ahí.
+4. Si el tag no está en `verified`, servir la imagen del registro público
+   (reenvío con token anónimo) y, en segundo plano, copiar a `quarantine` el
+   digest al que apunta ese tag (bajo su tag `sha256-<hex>`), escanearlo con
+   ClamAV y, si está limpio, promoverlo a `verified` al momento (**vía rápida**,
+   sin CVEs ni plazo). El proxy sirve el cuerpo en streaming desde el origen, sin
    serializar descargas.
 
 ## 7. Resolución de tags
 
-| Tipo | Ejemplo | Qué se sirve |
-|---|---|---|
-| Exacto | `1.27.4` | Esa versión. |
-| Literal no semver | `alpine` | El tag literal. |
-| Parcial | `1`, `1.27` | La mayor versión semver que cumple el prefijo. Sin sufijos. |
-| Flotante | `latest`, `stable` | La versión semver más alta de `verified`. Si no hay semver, el literal. |
-| Digest | `@sha256:…` | Esa imagen, de `verified` si está; si no, del upstream. |
+No hay resolución de versiones: todo tag es **literal** y se reenvía tal cual al
+registro público. No se usa `skopeo list-tags` en el camino de servicio.
 
-Los parciales y flotantes se resuelven contra `verified` primero.
+| Petición | Qué se sirve |
+|---|---|
+| `1.27.4` | Ese tag, de `verified` si está; si no, del upstream. |
+| `1.27` | Ese tag literal (no "la mayor `1.27.x`"). |
+| `latest`, `stable` | Ese tag literal, tal como lo publica el upstream. |
+| `alpine`, `bookworm` | Ese tag literal. |
+| `@sha256:…` | Esa imagen, de `verified` si está; si no, del upstream (sin cuarentena). |
+
+La prioridad es siempre `verified` primero; si el tag no está, el upstream.
 
 ## 8. Updater
 
 Un ciclo cada `CHECK_INTERVAL` (6h por defecto). Cada paso es un módulo y un
 fallo en uno no detiene los demás.
 
+El updater gestiona el **camino largo** (actualizaciones): las imágenes nuevas
+ya se promueven por la vía rápida del proxy. El camino largo aplica a los digests
+que siguen en cuarentena (p. ej. un tag verificado que movió a otro digest).
+
 1. **Limpieza de estado** (`cleanup.py`): un paquete sin imágenes en `verified`
    ni en `quarantine` se borra de la base de datos. Si el paquete tiene imágenes,
-   se quitan las entradas de cuarentena y las refs cuyo tag ya no existe en Zot.
-   Va primero para que un paquete borrado de Zot no se re-descargue en el paso 2.
-2. **Sincronizar upstream** (`upstream_sync.py`): para cada ref, detecta la
-   versión nueva y la baja a `quarantine`. Quita de `quarantine` los tags que el
-   upstream ya no publica.
-3. **Promover** (`promoter.py`): si un tag lleva al menos `QUARANTINE_DAYS` en
-   cuarentena, `zli cve list` no tiene CVEs con severidad en
-   `CVE_SEVERITY_THRESHOLD` y lo copia a `verified` y lo quita de `quarantine`.
-   Si tiene CVEs bloqueantes, lo borra de `quarantine`. Si el escaneo no está
+   se quitan las entradas de cuarentena cuyo digest ya no está en Zot y las refs
+   cuyo tag ya no está en `verified` ni en `quarantine`. Va primero para que un
+   paquete borrado de Zot no se re-descargue en el paso 2.
+2. **Sincronizar upstream** (`upstream_sync.py`): para cada ref pedida, mira el
+   digest actual de ese tag en el upstream; si es un digest nuevo (no está en
+   `verified` ni en `quarantine`), lo baja a `quarantine` bajo su tag
+   `sha256-<hex>` y registra la ref. Quita de `quarantine` los digests que el
+   upstream ya no publica bajo ninguna ref pedida.
+3. **Actualizar firmas ClamAV** (`clamav.py`): ejecuta `freshclam` para mantener
+   al día la base de firmas, antes de promover.
+4. **Promover** (`promoter.py`): si un digest lleva al menos `QUARANTINE_DAYS` en
+   cuarentena, no tiene CVEs con severidad en `CVE_SEVERITY_THRESHOLD` (según
+   `zli cve list`) y ClamAV no detecta malware, lo copia a `verified` re-apuntando
+   cada tag de cliente que lo referencia, y lo quita de `quarantine`. Si tiene
+   CVEs bloqueantes o malware, lo borra de `quarantine`. Si algún escaneo no está
    listo, espera al siguiente ciclo sin promover ni borrar.
-4. **Alias y retención** (`retention.py`): `latest`, `stable`, `1.27`… apuntan a
-   la versión que les corresponde. Se podan las versiones semver que ninguna ref
-   pide. Nunca se borran tags no semver.
+5. **Retención** (`retention.py`): conserva en `verified` los tags que alguien ha
+   pedido y poda el resto. No hay alias.
 
 ## 9. Zot
 
@@ -144,14 +164,29 @@ guarda `verified/` y `quarantine/`.
 El escaneo corre en segundo plano cada ~15 min, sin configuración. Por eso un
 tag recién insertado puede no tener resultado de CVEs todavía.
 
+### Multi-arch
+
+Se almacena la imagen multi-arch **completa** (índice + manifests de todas las
+arquitecturas + blobs). Así el digest que usa el sistema como identidad es el
+**digest del índice**, que coincide con el que devuelve `skopeo inspect` y con el
+que Zot guarda. Si se copiara solo la plataforma del servidor
+(`--multi-arch system`), el digest inspeccionado (índice) y el almacenado
+(manifest de plataforma) no coincidirían, y fallarían la limpieza de cuarentena y
+la detección de actualizaciones.
+
+El escaneo de malware extrae solo la plataforma del servidor
+(`--multi-arch system` en `skopeo.export_dir`) porque `umoci` no desempaqueta un
+índice. Por tanto, se escanea la plataforma que realmente se ejecuta en el
+homelab; si algún día hubiera clientes de otra arquitectura, habría que escanear
+cada plataforma.
+
 ## 10. Estructura del repo
 
 ```
-shared/zqp/        código común: image_ref, versions, state, env,
-                   skopeo, zot_api, quarantine
+shared/zqp/        código común: image_ref, state, env, skopeo, zot_api, quarantine
 proxy/app/         FastAPI: main, service, resolver, forwarder, upstream, config
 updater/app/       main, upstream_sync, promoter, retention, cleanup,
-                   scanner, config
+                   scanner, malware, clamav, config
 config/zot/        config.json de Zot
 config/containers/ registries inseguros para skopeo
 deploy/quadlets/   zot-quarantine-proxy.pod, zot, proxy y updater (systemd de usuario)
@@ -171,12 +206,15 @@ docs/design.md     este documento
 
 ## 12. Invariantes
 
-- Nada se sirve desde `verified` si no ha pasado por cuarentena.
+- Nada se sirve desde `verified` que no haya pasado el escaneo de malware (vía
+  rápida) o el ciclo completo (actualizaciones).
 - `quarantine` no se sirve: solo se escanea y se promueve.
-- Un tag exacto se sirve tal cual. No se sustituye por otra versión.
-- Un tag se promueve solo con el tiempo cumplido y sin CVEs bloqueantes.
+- Todo tag se sirve literal, tal como lo publica el upstream. No se resuelve a
+  otra versión.
+- Una imagen nueva se promueve si ClamAV está limpio (sin CVEs ni plazo). Una
+  actualización se promueve tras el plazo y los escaneos (CVE opcional + malware).
 - Un digest se sirve de `verified` si está; si no, del upstream (no se cuarentena).
-- La retención solo borra versiones semver que nadie pide.
+- La retención solo conserva los tags de `verified` que alguien ha pedido.
 
 ## 13. Validación en entorno real
 
@@ -185,8 +223,8 @@ Validado en un entorno Linux real (Podman rootless, Zot v2.1.22, Trivy):
 - El proxy sirve de `verified` cuando está, reenvía al upstream (token anónimo y
   redirect a CDN) cuando no, y copia a `quarantine` en segundo plano con skopeo.
 - Promoción completa: cuarentena → escaneo de Trivy → `verified` (con `zli`).
-- Etiqueta flotante: `latest` se resuelve a la mayor versión verificada, y
-  `upstream_sync` baja la última del upstream para mantenerla al día.
+- Etiqueta móvil: `latest` se sirve tal como lo publica el upstream; al moverse a
+  un digest nuevo, se abre una cuarentena nueva para ese digest.
 
 Formato real de `zli cve list -f json` (validado):
 

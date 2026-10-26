@@ -44,16 +44,16 @@ Una imagen puede estar en uno de estos estados dentro del almacén:
 podman pull <servidor>:5001/docker.io/library/nginx:1.27
         │
         ▼
-¿Hay una versión verificada que cumpla 1.27?  ──sí──► se sirve desde verified/
+¿Está el tag 1.27 en verified/?  ──sí──► se sirve desde verified/
         │ no
         ▼
 se sirve desde el registro público (upstream)
         │
         ▼
-en segundo plano, se copia a quarantine/ (si no está ya) para escanearla
+en segundo plano, se copia a quarantine/ el digest al que apunta (si no está ya)
 ```
 
-Las reglas de qué versión cumple cada petición están en
+Las reglas de cómo se sirve cada tag están en
 [03 · Tags y versiones](03-tags-y-versiones.md).
 
 ## Casos de uso
@@ -69,16 +69,17 @@ escaneo limpio, el updater la promociona a `verified/`.
 Otra máquina pide `nginx:1.27`. Si ya se promovió, se sirve desde `verified/`; si
 todavía está en cuarentena, se sirve de nuevo del upstream.
 
-### Caso 3 · Aparece una versión nueva
+### Caso 3 · Aparece un digest nuevo
 
-Una versión nueva de `nginx` se publica en el upstream. En el siguiente ciclo del
-updater (por defecto cada 6 horas) se descarga a cuarentena, si alguien ha pedido
-esa línea de versiones. Cuando cumple el plazo y el escaneo, pasa a `verified/`.
+El upstream re-publica un tag (por ejemplo, mueve `latest` a un digest nuevo). En
+el siguiente ciclo del updater (por defecto cada 6 horas) se abre una cuarentena
+nueva para ese digest, si alguien ha pedido ese tag. Cuando cumple el plazo y el
+escaneo, pasa a `verified/`.
 
-### Caso 4 · Una versión deja de publicarse
+### Caso 4 · Un tag deja de publicarse
 
-Si el upstream retira un tag que estaba en cuarentena, el updater lo borra de
-cuarentena en el siguiente ciclo.
+Si el upstream retira un tag que estaba en cuarentena (o lo mueve a otro digest),
+el updater descarta la cuarentena del digest anterior en el siguiente ciclo.
 
 ### Caso 5 · Un paquete deja de usarse
 
@@ -91,7 +92,8 @@ updater lo borra de su base de datos de estado.
   descargar. Ver [05 · Operación](05-operacion.md#seguridad-de-acceso).
 - **No escanea en el momento de la descarga.** El escaneo se hace en segundo plano
   y puede tardar hasta unos 15 minutos en tener resultado.
-- **No cuarentena los digests.** Un digest que no está verificado se sirve del
-  upstream, pero al no tener tag no pasa por cuarentena ni se promueve.
+- **No cuarentena los digests pedidos directamente.** Un digest que no está
+  verificado se sirve del upstream, pero al no llevar tag no pasa por cuarentena
+  ni se promueve.
 - **No soporta registros privados** con credenciales. Solo registros públicos o
   de acceso anónimo.

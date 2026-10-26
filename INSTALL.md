@@ -148,6 +148,22 @@ podman exec zot ls /var/lib/zot
 cd ~/zot-quarantine-proxy && git pull
 podman build -t localhost/zot-proxy:latest   -f proxy/Containerfile   .
 podman build -t localhost/zot-updater:latest -f updater/Containerfile .
+```
+
+> **Aviso: esta versión cambia el esquema de `state.sqlite3`** (la cuarentena
+> pasa a identificarse por digest). Si vienes de una versión anterior, purga el
+> fichero de estado **con los servicios parados**, antes de arrancarlos:
+>
+> ```bash
+> systemctl --user stop proxy.service updater.service
+> rm ~/.local/share/containers/storage/volumes/proxy-data/_data/state.sqlite3
+> ```
+>
+> No se pierde ninguna imagen: están en el volumen `zot-data`, así que
+> `verified/` y `quarantine/` quedan intactas. Solo se pierde el estado —las refs
+> pedidas y los plazos de cuarentena—, que vuelven a contar desde cero.
+
+```bash
 systemctl --user restart proxy.service updater.service
 ```
 

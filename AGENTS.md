@@ -7,7 +7,7 @@ basado en Podman rootless, Zot y Python. Lee `README.md` para el uso e
 ## Mapa del repo
 
 ```
-shared/zqp/        código común: nombres (image_ref), tags (versions), SQLite (state),
+shared/zqp/        código común: nombres y referencias (image_ref), SQLite (state),
                    skopeo, cliente de la API de Zot (zot_api), cuarentena (quarantine)
 proxy/app/         FastAPI: endpoints OCI, resolución del origen (verified/upstream),
                    reenvío a Zot y a registros públicos
@@ -47,15 +47,18 @@ No cambies estas reglas sin confirmarlo con el usuario:
   `zli cve list` no tiene CVEs con severidad en `CVE_SEVERITY_THRESHOLD` la imagen
   se promueve a `verified`; si los tiene, se **elimina** de cuarentena. Si el
   escaneo no está listo (PENDING), no se promueve ni se elimina: se reintenta.
-- **Tags**: `latest`/`stable` son flotantes y apuntan a la versión verificada
-  más alta. `1` y `1.27` son parciales y apuntan a la mayor versión que cumplen.
-  Un tag exacto se sirve tal cual. Los tags no semver se tratan como literales.
-- **Retención**: solo se podan versiones semver que nadie pide. Nunca se borran
-  tags no semver (`alpine`, etc.) ni digests que aún referencia un tag protegido.
+- **Tags literales**: se reenvía al registro público exactamente el tag pedido
+  (`latest`, `1.27`, `1.27.4`, `alpine`…), sin inferir versiones. La cuarentena
+  va por **digest**: cada digest se guarda en `quarantine/` bajo un tag
+  `sha256-<hex>` con su propio reloj, y al promover se re-apunta el tag en
+  `verified`.
+- **Retención**: en `verified` solo se conservan los tags que alguien ha pedido;
+  el resto se poda. Un tag móvil (p. ej. `latest`) que el upstream cambia abre
+  una cuarentena nueva por digest y descarta la del digest anterior.
 - **Limpieza de estado**: un paquete sin imágenes en `verified` ni en
   `quarantine` se borra de la base de datos.
 - **Digests**: se sirven de `verified` si ya existen; si no, se reenvían al
-  upstream como un tag exacto. Al no tener tag, no se copian a cuarentena.
+  upstream. Al no tener tag, no se copian a cuarentena.
 
 ## Comandos
 
@@ -89,15 +92,14 @@ El directorio `.venv/` está en `.gitignore`.
   `Args:`, `Returns:` y `Raises:`. Ejemplo:
 
   ```python
-  def pick_tag(spec: TagSpec, candidates: Iterable[str]) -> str | None:
-      """Elige el tag concreto que satisface una referencia.
+  def digest_to_tag(digest: str) -> str:
+      """Convierte un digest en un tag OCI para almacenar en Zot.
 
       Args:
-          spec: Referencia pedida por el cliente, ya clasificada.
-          candidates: Tags disponibles en el registro.
+          digest: Digest del manifest, p. ej. ``sha256:abc…``.
 
       Returns:
-          El tag elegido, o None si ninguno cumple la referencia.
+          El tag derivado, p. ej. ``sha256-abc…``.
       """
   ```
 
@@ -132,7 +134,8 @@ El directorio `.venv/` está en `.gitignore`.
 ## Verificación
 
 - Antes de dar un cambio por bueno: tests + `compileall`.
-- Si cambias la lógica de versiones, añade o ajusta tests en `tests/test_shared.py`.
+- Si cambias la lógica de nombres o del estado de cuarentena, añade o ajusta
+  tests en `tests/test_shared.py`.
 - La integración real (Zot, skopeo, zli, Trivy) solo se puede probar en el
   servidor Fedora. Di explícitamente cuándo algo no está verificado en un
   entorno real.

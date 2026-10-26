@@ -14,7 +14,7 @@ registro original:
 | `<servidor>:5001` | `fedora-server:5001` | Dirección del proxy. |
 | `<registro>` | `docker.io`, `ghcr.io`, `quay.io` | Registro público de origen. |
 | `<repositorio>` | `library/nginx` | Ruta dentro de ese registro. |
-| `:<tag>` | `:1.27` | Versión pedida. Ver [03 · Tags y versiones](03-tags-y-versiones.md). |
+| `:<tag>` | `:1.27` | Tag pedido. Ver [03 · Tags y versiones](03-tags-y-versiones.md). |
 
 ### Atajo para Docker Hub
 
@@ -29,13 +29,13 @@ además el prefijo `library/`, que también se puede omitir:
 ## Ejemplos
 
 ```bash
-# Versión exacta
+# Un tag concreto
 podman pull fedora-server:5001/docker.io/library/nginx:1.27.4
 
-# Cualquier parche de la 1.27: se sirve la más alta disponible
+# Un tag de línea 1.27 (se sirve tal cual, no "la más alta")
 podman pull fedora-server:5001/docker.io/library/nginx:1.27
 
-# La versión más reciente verificada
+# El tag latest, tal como lo publica Docker Hub
 podman pull fedora-server:5001/docker.io/library/nginx:latest
 
 # Desde GitHub Container Registry
@@ -46,11 +46,11 @@ podman pull fedora-server:5001/ghcr.io/owner/herramienta:2.0.0
 
 | Situación | Resultado |
 |---|---|
-| La imagen ya está verificada | Se descarga al instante desde `verified/`. |
-| La imagen no está verificada y existe en el upstream | Se sirve del registro público y, en segundo plano, se copia a cuarentena. |
+| El tag ya está en `verified/` | Se descarga al instante desde local. |
+| El tag no está en `verified/` y existe en el upstream | Se sirve del registro público y, en segundo plano, se copia a cuarentena. |
 | El registro no está permitido | Error `DENIED` (403). |
 | El nombre no es válido | Error `NAME_INVALID` (400). |
-| No existe ningún tag que cumpla la petición | Error `MANIFEST_UNKNOWN` (404) para parciales y flotantes. Ver [06 · Errores](06-errores.md). |
+| El tag no existe en el upstream | El upstream responde `MANIFEST_UNKNOWN` (404), que se reenvía tal cual. Ver [06 · Errores](06-errores.md). |
 
 Para los códigos de error y su significado, ver [06 · Errores](06-errores.md).
 

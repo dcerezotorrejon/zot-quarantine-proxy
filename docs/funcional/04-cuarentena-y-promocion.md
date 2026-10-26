@@ -3,56 +3,64 @@
 Este documento describe el ciclo de vida de una imagen desde que se descarga
 hasta que pasa a `verified/`, o hasta que se retira.
 
+Hay dos caminos para llegar a `verified/`:
+
+- **Imagen nueva** (vía rápida): el proxy la escanea con ClamAV en segundo plano
+  y, si está limpia, la promueve al momento. Sin CVEs ni plazo.
+- **Actualización** (camino largo): un tag ya verificado que mueve a otro digest
+  espera `QUARANTINE_DAYS` y pasa por CVEs (opcional) y malware.
+
 ## Ciclo de vida
 
 ```
-          pedido por un cliente
-                  │
-                  ▼
-        ¿está en verified/?  ──sí──► se sirve desde verified/
-                  │ no
-                  ▼
-        se sirve del upstream; en segundo plano
-        se copia a quarantine/ (si no está ya)
-                  │
-                  ▼
-        ┌──────────────────┐
-        │   CUARENTENA     │  en espera (no se sirve)
-        │  (quarantine/)   │
-        └────────┬─────────┘
-                 │ pasan QUARANTINE_DAYS (7 por defecto)
-                 │ y el escaneo no tiene CVEs bloqueantes
-                 ▼
-        ┌──────────────────┐
-        │   VERIFICADA     │  versión de referencia
-        │   (verified/)    │
-        └──────────────────┘
-
-  En cualquier momento: si el upstream retira el tag, sale de cuarentena.
+pedido por un cliente
+   │
+   ▼
+¿está el tag en verified/? ──sí──► se sirve desde verified/
+   │ no
+   ▼
+se sirve del upstream; en segundo plano se copia a quarantine/
+el digest (tag sha256-<hex>) y se escanea con ClamAV
+   │
+   ├── imagen NUEVA: ClamAV limpio ──► se promueve al momento (vía rápida)
+   │
+   └── actualización: QUARANTINE_DAYS (7 días) + CVEs (opcional) + malware
+                                      └──► se promueve (camino largo)
 ```
 
-## Plazo de cuarentena
+## Plazo de cuarentena (camino largo)
+
+El plazo solo aplica a las **actualizaciones**. Las imágenes nuevas se promueven
+al momento por la vía rápida (solo ClamAV), sin esperar el plazo.
 
 - Por defecto, **7 días** (`QUARANTINE_DAYS`).
-- El plazo cuenta desde el momento en que la imagen **entra en cuarentena**, no
-  desde la fecha en que el upstream publicó la versión.
-- Una imagen que lleva menos días no se evalúa aunque ya esté escaneada.
+- El plazo cuenta desde el momento en que el **digest** entra en cuarentena, no
+  desde la fecha en que el upstream publicó el tag.
+- Cada digest tiene su propio reloj: un tag móvil que cambia de digest abre una
+  cuarentena nueva y no hereda el plazo de la anterior.
+- Un digest que lleva menos días no se evalúa aunque ya esté escaneado.
 
 ## Cuándo se ejecuta el mantenimiento
 
 El updater ejecuta un ciclo al arrancar y después cada **6 horas**
-(`CHECK_INTERVAL`). Cada ciclo hace cuatro cosas en este orden:
+(`CHECK_INTERVAL`). Cada ciclo hace cinco cosas en este orden:
 
 1. **Limpiar** la base de datos: borra los paquetes sin imágenes y las refs o
-   cuarentenas cuyo tag ya no está en Zot.
-2. **Buscar versiones nuevas** de los paquetes pedidos y descargarlas a cuarentena.
-3. **Promover** las imágenes que cumplen el plazo y el escaneo.
-4. **Actualizar alias y retención** (`latest`, `1.27`… y las versiones que se borran).
+   cuarentenas cuyo digest ya no está en Zot.
+2. **Sincronizar con el upstream**: para cada tag pedido, si el digest al que
+   apunta ahora es nuevo, lo descarga a cuarentena.
+3. **Actualizar las firmas de ClamAV** con `freshclam`.
+4. **Promover** los digests que cumplen el plazo y pasan los escaneos de CVEs y
+   malware.
+5. **Retener**: conserva los tags de `verified/` que alguien pide y poda el resto.
 
 Si un paso falla, el ciclo registra el error y sigue con el siguiente. Los
 errores aparecen en los logs del updater.
 
-## Escaneo de CVEs
+## Escaneo de CVEs (camino largo)
+
+El escaneo de CVEs solo aplica a las **actualizaciones**. Las imágenes nuevas no
+se escanean por CVEs (solo por malware, en la vía rápida).
 
 El escaneo lo hace Zot en segundo plano, con Trivy. Zot lo ejecuta cada 15 minutos
 aproximadamente, así que puede tardar hasta ese tiempo después de la descarga. Mientras no hay resultado, la imagen queda **pendiente**: no se
@@ -69,6 +77,34 @@ El veredicto puede ser:
 
 Las severidades bloqueantes se configuran con `CVE_SEVERITY_THRESHOLD`.
 Ver [05 · Operación](05-operacion.md#variables-de-configuración).
+
+Para no bloquear por CVEs, déjalo vacío (`CVE_SEVERITY_THRESHOLD=`): en ese caso
+la imagen se promueve en cuanto el escaneo está disponible, sin importar los CVEs
+encontrados. La imagen sigue esperando a que el escaneo de Zot termine (~15 min).
+
+## Escaneo de malware
+
+El escaneo de malware se hace en los dos caminos:
+
+- **Vía rápida (proxy)**: en cuanto se copia a cuarentena, el proxy desempaqueta
+  la imagen (con `umoci`) y la escanea con **ClamAV**. Si está limpia, la promueve
+  al momento.
+- **Camino largo (updater)**: si el digest sigue en cuarentena al cumplir el
+  plazo, el updater repite el escaneo antes de promover.
+
+El veredicto puede ser:
+
+| Veredicto | Significado | Qué pasa |
+|---|---|---|
+| **Limpia** | ClamAV no detectó nada. | Continúa hacia la promoción (si los CVEs también están limpios). |
+| **Infectada** | ClamAV detectó malware. | Se **elimina de la cuarentena** al cumplir el plazo. Se registran las rutas afectadas. |
+| **Pendiente** | No se pudo desempaquetar o escanear. | Se reintenta en el siguiente ciclo. |
+
+Igual que con los CVEs: si se detecta malware, la imagen no se promueve; se elimina.
+
+La base de firmas de ClamAV se actualiza con `freshclam` en cada ciclo de
+mantenimiento (justo antes de promover). Si `freshclam` falla, se registra un
+aviso y el escaneo continúa con la base de firmas disponible.
 
 ## Qué pasa con una imagen vulnerable
 
@@ -93,36 +129,36 @@ en cuarentena indefinidamente. Conviene revisar los avisos de `zli` en los logs.
 
 ## Promoción
 
-Cuando una imagen cumple las tres condiciones, el updater:
+Cuando un digest cumple las tres condiciones, el updater:
 
-1. La copia de `quarantine/` a `verified/`.
+1. Copia el digest de `quarantine/` a `verified/`, re-apuntando cada tag de
+   cliente que lo referencia.
 2. Borra la copia de `quarantine/`.
-3. La quita del registro de cuarentena.
+3. Lo quita del registro de cuarentena.
 
 Durante la promoción, la imagen sigue en `quarantine/` sin servirse; pasa a
 servirse desde `verified/` cuando termina la copia.
 
 ## Qué se conserva
 
-Después de cada promoción, el updater calcula qué versiones se conservan:
+Después de cada promoción, el updater calcula qué tags se conservan en `verified/`:
 
-- **Alias.** Los tags flotantes y parciales que se han pedido (`latest`, `1.27`…)
-  se crean o actualizan en `verified/` para que apunten a la versión que les
-  corresponde. Un alias es solo un nombre que apunta a una versión existente: no
-  ocupa espacio extra.
-- **Versiones pedidas.** Se conserva la versión que cumple cada tag pedido.
-- **Tags que no son versiones.** Nunca se borran (`alpine`, `bookworm`…).
-- **Todo lo demás.** Las versiones semver que nadie pide se borran.
+- **Tags pedidos.** Se conserva cada tag que alguien ha pedido (los que están en
+  la base de datos de estado).
+- **Todo lo demás.** Los tags de `verified/` que nadie pide se podan.
 
-Ejemplo: si los clientes solo han pedido `1.27` y `latest`, y en `verified/` hay
-`1.26.9`, `1.27.3`, `1.27.4` y `2.1.0`, se conservan `1.27.4` y `2.1.0`. Se borran
-`1.26.9` y `1.27.3`.
+Ya no hay alias: `latest` no apunta a otra versión; es un tag más, verificado por
+su propio digest.
+
+Ejemplo: si los clientes solo han pedido `1.27.4` y `latest`, y en `verified/`
+hay `1.26.9`, `1.27.3`, `1.27.4` y `2.1.0`, se conservan `1.27.4` y `latest`. Se
+podan `1.26.9`, `1.27.3` y `2.1.0`.
 
 ## Limpieza de la base de datos
 
 Un paquete deja de estar en la base de datos cuando no tiene ninguna imagen en
-`verified/` ni en `quarantine/`. Eso ocurre, por ejemplo, cuando todas sus
-versiones se han purgado porque el upstream las retiró.
+`verified/` ni en `quarantine/`. Eso ocurre, por ejemplo, cuando todos sus tags
+se han purgado porque el upstream los retiró.
 
 Mientras quede al menos una imagen de cualquiera de los dos namespaces, el
 paquete sigue activo y el updater sigue vigilando sus tags.
