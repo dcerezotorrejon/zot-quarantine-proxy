@@ -1,7 +1,8 @@
 """Estado persistente compartido por proxy y updater (SQLite).
 
 - `refs`: referencias de tag solicitadas por los clientes (qué mantener fresco).
-- `quarantine`: cuándo entró cada tag en cuarentena (para contar los días).
+- `quarantine`: un reloj de cuarentena por digest (inmutable).
+- `quarantine_refs`: qué tag de cliente satisface cada digest en cuarentena.
 """
 
 from __future__ import annotations
@@ -24,20 +25,27 @@ CREATE TABLE IF NOT EXISTS refs (
 CREATE TABLE IF NOT EXISTS quarantine (
     registry TEXT NOT NULL,
     path TEXT NOT NULL,
-    tag TEXT NOT NULL,
+    digest TEXT NOT NULL,
     quarantined_at INTEGER NOT NULL,
-    PRIMARY KEY (registry, path, tag)
+    PRIMARY KEY (registry, path, digest)
+);
+CREATE TABLE IF NOT EXISTS quarantine_refs (
+    registry TEXT NOT NULL,
+    path TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    PRIMARY KEY (registry, path, digest, reference)
 );
 """
 
 
 @dataclass(frozen=True)
 class QuarantineRecord:
-    """Una imagen en cuarentena y el momento en que entró."""
+    """Un digest en cuarentena y el momento en que entró."""
 
     registry: str
     path: str
-    tag: str
+    digest: str
     quarantined_at: int
 
 
@@ -104,7 +112,7 @@ class StateStore:
             )
 
     def delete_repo(self, registry: str, path: str) -> None:
-        """Elimina un paquete completo del estado: refs y cuarentena.
+        """Elimina un paquete completo del estado: refs, cuarentena y sus referencias.
 
         Args:
             registry: Registro upstream del paquete.
@@ -113,54 +121,125 @@ class StateStore:
         with self._connect() as connection:
             connection.execute("DELETE FROM refs WHERE registry = ? AND path = ?", (registry, path))
             connection.execute(
+                "DELETE FROM quarantine_refs WHERE registry = ? AND path = ?", (registry, path)
+            )
+            connection.execute(
                 "DELETE FROM quarantine WHERE registry = ? AND path = ?", (registry, path)
             )
 
-    def add_quarantine(self, registry: str, path: str, tag: str, quarantined_at: int) -> None:
-        """Registra una imagen en cuarentena. Si ya existe, no cambia su fecha de entrada.
+    def add_quarantine(
+        self, registry: str, path: str, digest: str, reference: str, quarantined_at: int
+    ) -> None:
+        """Registra un digest en cuarentena y la referencia de cliente que satisface.
+
+        Si el digest ya estaba en cuarentena, se conserva su fecha de entrada
+        original y solo se añade la nueva referencia.
 
         Args:
             registry: Registro upstream.
             path: Ruta del repositorio.
-            tag: Tag concreto descargado.
+            digest: Digest del manifest, p. ej. ``sha256:abc…``.
+            reference: Tag de cliente que debe apuntar a ese digest al promover.
             quarantined_at: Instante de entrada, en segundos epoch.
         """
         with self._connect() as connection:
             connection.execute(
-                """
-                INSERT OR IGNORE INTO quarantine (registry, path, tag, quarantined_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (registry, path, tag, quarantined_at),
+                "INSERT OR IGNORE INTO quarantine (registry, path, digest, quarantined_at) "
+                "VALUES (?, ?, ?, ?)",
+                (registry, path, digest, quarantined_at),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO quarantine_refs (registry, path, digest, reference) "
+                "VALUES (?, ?, ?, ?)",
+                (registry, path, digest, reference),
             )
 
     def list_quarantine(self) -> list[QuarantineRecord]:
-        """Lista todas las imágenes en cuarentena.
+        """Lista todos los digests en cuarentena.
 
         Returns:
             Registros de cuarentena, en el orden de la tabla.
         """
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT registry, path, tag, quarantined_at FROM quarantine"
+                "SELECT registry, path, digest, quarantined_at FROM quarantine"
             ).fetchall()
         return [
-            QuarantineRecord(row["registry"], row["path"], row["tag"], row["quarantined_at"])
+            QuarantineRecord(row["registry"], row["path"], row["digest"], row["quarantined_at"])
             for row in rows
         ]
 
-    def remove_quarantine(self, registry: str, path: str, tag: str) -> None:
-        """Quita una imagen de la cuarentena (tras promoverla o purgarla).
+    def quarantine_refs(self, registry: str, path: str, digest: str) -> list[str]:
+        """Lista las referencias de cliente asociadas a un digest en cuarentena.
 
         Args:
             registry: Registro upstream.
             path: Ruta del repositorio.
-            tag: Tag a quitar.
+            digest: Digest del manifest.
+
+        Returns:
+            Referencias (tags de cliente) que apuntarán a ese digest al promover.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT reference FROM quarantine_refs "
+                "WHERE registry = ? AND path = ? AND digest = ? ORDER BY reference",
+                (registry, path, digest),
+            ).fetchall()
+        return [row["reference"] for row in rows]
+
+    def quarantine_refs_by_repo(self) -> dict[tuple[str, str], list[tuple[str, str]]]:
+        """Agrupa las asociaciones ``(digest, reference)`` por repositorio.
+
+        Returns:
+            Diccionario ``(registry, path) -> [(digest, reference), ...]``.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT registry, path, digest, reference FROM quarantine_refs "
+                "ORDER BY registry, path, digest, reference"
+            ).fetchall()
+        grouped: dict[tuple[str, str], list[tuple[str, str]]] = {}
+        for row in rows:
+            grouped.setdefault((row["registry"], row["path"]), []).append(
+                (row["digest"], row["reference"])
+            )
+        return grouped
+
+    def remove_quarantine_ref(self, registry: str, path: str, digest: str, reference: str) -> None:
+        """Quita la asociación de una referencia con un digest.
+
+        No borra la fila de cuarentena del digest aunque se quede sin referencias.
+
+        Args:
+            registry: Registro upstream.
+            path: Ruta del repositorio.
+            digest: Digest del manifest.
+            reference: Referencia de cliente a desasociar.
         """
         with self._connect() as connection:
             connection.execute(
-                "DELETE FROM quarantine WHERE registry = ? AND path = ? AND tag = ?",
-                (registry, path, tag),
+                "DELETE FROM quarantine_refs "
+                "WHERE registry = ? AND path = ? AND digest = ? AND reference = ?",
+                (registry, path, digest, reference),
+            )
+
+    def remove_quarantine(self, registry: str, path: str, digest: str) -> None:
+        """Quita un digest de la cuarentena y todas sus referencias.
+
+        Args:
+            registry: Registro upstream.
+            path: Ruta del repositorio.
+            digest: Digest del manifest a quitar.
+        """
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM quarantine_refs WHERE registry = ? AND path = ? AND digest = ?",
+                (registry, path, digest),
+            )
+            connection.execute(
+                "DELETE FROM quarantine WHERE registry = ? AND path = ? AND digest = ?",
+                (registry, path, digest),
             )
 
     @contextmanager

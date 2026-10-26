@@ -12,14 +12,14 @@ from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from zqp.image_ref import VERIFIED, ImageRef, InvalidImageName, RepoName
-from zqp.skopeo import SkopeoError
+from zqp.malware import MalwareScanner
 from zqp.state import StateStore
 from zqp.zot_api import MANIFEST_ACCEPT, ZotApi
 
 from .config import Settings
 from .forwarder import ZotForwarder, to_streaming_response
 from .resolver import ServeSource
-from .service import ImageNotFound, ImageService, UpstreamNotAllowed
+from .service import ImageService, UpstreamNotAllowed
 from .upstream import UpstreamAuthError, UpstreamForwarder
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     zot = ZotApi(settings.zot_url)
     state = StateStore(settings.state_dir / "state.sqlite3")
-    app.state.service = ImageService(settings, zot, state)
+    malware = MalwareScanner(settings.zot_registry_host, settings.umoci_bin, settings.clamscan_bin)
+    app.state.service = ImageService(settings, zot, state, malware)
     app.state.zot = ZotForwarder(settings.zot_url)
     app.state.upstream = UpstreamForwarder()
     logger.info("Proxy listo; Zot en %s", settings.zot_url)
@@ -99,8 +100,6 @@ def _register_error(exc_type: type[Exception], status: int, code: str) -> None:
 
 _register_error(InvalidImageName, 400, "NAME_INVALID")
 _register_error(UpstreamNotAllowed, 403, "DENIED")
-_register_error(ImageNotFound, 404, "MANIFEST_UNKNOWN")
-_register_error(SkopeoError, 502, "UNKNOWN")
 _register_error(UpstreamAuthError, 502, "UNKNOWN")
 _register_error(httpx.TransportError, 503, "UNAVAILABLE")
 

@@ -15,6 +15,8 @@ class Settings:
     zot_url: str
     upstream_registries: frozenset[str]
     state_dir: Path
+    umoci_bin: str
+    clamscan_bin: str
     log_level: str
 
     @classmethod
@@ -28,6 +30,8 @@ class Settings:
             zot_url=env_str("ZOT_URL", "http://zot:5000"),
             upstream_registries=env_list("UPSTREAM_REGISTRIES", DEFAULT_UPSTREAM_REGISTRIES),
             state_dir=Path(env_str("STATE_DIR", "/var/lib/proxy")),
+            umoci_bin=env_str("UMOCI_BIN", "umoci"),
+            clamscan_bin=env_str("CLAMSCAN_BIN", "clamscan"),
             log_level=env_str("LOG_LEVEL", "INFO").upper(),
         )
 

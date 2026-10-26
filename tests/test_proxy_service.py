@@ -12,15 +12,24 @@ from unittest import mock
 
 from app.config import Settings
 from app.resolver import ServeSource
-from app.service import ImageNotFound, ImageService, UpstreamNotAllowed
+from app.service import ImageService, UpstreamNotAllowed
 from zqp.image_ref import ImageRef, RepoName
+from zqp.malware import MalwareResult, MalwareVerdict
 from zqp.state import StateStore
 
 
 class FakeZot:
-    """Zot simulado: tags y digests por repositorio físico."""
+    """Zot simulado: tags y digests por repositorio físico.
 
-    def __init__(self, repos: dict[str, list[str]] | None = None, digests: dict[str, set[str]] | None = None) -> None:
+    ``repos`` mapea repo físico a lista de tags; ``digests`` mapea repo físico a
+    un dict ``{reference: digest}``.
+    """
+
+    def __init__(
+        self,
+        repos: dict[str, list[str]] | None = None,
+        digests: dict[str, dict[str, str]] | None = None,
+    ) -> None:
         self._repos = repos or {}
         self._digests = digests or {}
 
@@ -28,9 +37,19 @@ class FakeZot:
         return list(self._repos.get(repo, []))
 
     def get_digest(self, repo: str, reference: str) -> str | None:
-        if reference in self._digests.get(repo, set()):
-            return f"sha256:{reference}"
-        return None
+        return self._digests.get(repo, {}).get(reference)
+
+
+class FakeMalware:
+    """Escáner de malware simulado: devuelve siempre un veredicto fijo."""
+
+    def __init__(
+        self, verdict: MalwareVerdict = MalwareVerdict.PENDING, infected_files: tuple[str, ...] = ()
+    ) -> None:
+        self._result = MalwareResult(verdict, infected_files)
+
+    def evaluate(self, repo_path: str, tag: str) -> MalwareResult:
+        return self._result
 
 
 class ImageServiceTests(unittest.TestCase):
@@ -41,6 +60,8 @@ class ImageServiceTests(unittest.TestCase):
             zot_url="http://zot:5000",
             upstream_registries=frozenset({"docker.io"}),
             state_dir=Path(self._tmp.name),
+            umoci_bin="umoci",
+            clamscan_bin="clamscan",
             log_level="INFO",
         )
 
@@ -50,57 +71,63 @@ class ImageServiceTests(unittest.TestCase):
     def service(
         self,
         repos: dict[str, list[str]] | None = None,
-        digests: dict[str, set[str]] | None = None,
+        digests: dict[str, dict[str, str]] | None = None,
+        malware: FakeMalware | None = None,
     ) -> ImageService:
-        return ImageService(self.settings, FakeZot(repos, digests), self.state)
+        return ImageService(self.settings, FakeZot(repos, digests), self.state, malware or FakeMalware())
 
     def ref(self, reference: str) -> ImageRef:
         return ImageRef(RepoName("docker.io", "library/nginx"), reference)
 
-    def test_floating_tag_served_from_verified_without_touching_upstream(self):
-        service = self.service({"verified/docker.io/library/nginx": ["2.0.0"]})
-        with mock.patch("zqp.skopeo.list_tags") as list_tags, \
-             mock.patch("zqp.quarantine.copy_to_quarantine") as copy_call:
+    def test_tag_served_from_verified_without_touching_upstream(self):
+        service = self.service({"verified/docker.io/library/nginx": ["latest"]})
+        with mock.patch("zqp.skopeo.inspect_digest") as inspect, \
+             mock.patch("zqp.quarantine.ensure_quarantined") as ensure:
             target = service.locate(self.ref("latest"))
-        self.assertEqual((target.source, target.reference), (ServeSource.VERIFIED, "2.0.0"))
-        list_tags.assert_not_called()
-        copy_call.assert_not_called()
+        self.assertEqual((target.source, target.reference), (ServeSource.VERIFIED, "latest"))
+        inspect.assert_not_called()
+        ensure.assert_not_called()
 
-    def test_floating_tag_resolves_upstream_and_schedules_quarantine(self):
+    def test_tag_not_verified_is_served_literal_and_quarantined(self):
         service = self.service({})
-        upstream = ["1.27.3", "1.27.4", "2.1.0"]
-        with mock.patch("zqp.skopeo.list_tags", return_value=upstream), \
+        with mock.patch("zqp.skopeo.inspect_digest", return_value="sha256:abc") as inspect, \
              mock.patch("app.service._spawn", side_effect=lambda fn: fn()), \
-             mock.patch("zqp.quarantine.copy_to_quarantine") as copy_call:
+             mock.patch("zqp.quarantine.ensure_quarantined") as ensure:
             target = service.locate(self.ref("latest"))
-        self.assertEqual((target.source, target.reference), (ServeSource.UPSTREAM, "2.1.0"))
-        copy_call.assert_called_once()
-        args = copy_call.call_args.args
-        self.assertEqual(args[0], "zot:5000")
-        self.assertIs(args[1], self.state)
-        self.assertEqual(args[2].upstream_image, "docker.io/library/nginx")
-        self.assertEqual(args[3], "2.1.0")
+        self.assertEqual((target.source, target.reference), (ServeSource.UPSTREAM, "latest"))
+        inspect.assert_called_once_with("docker.io/library/nginx:latest")
+        ensure.assert_called_once()
+        args = ensure.call_args.args
+        self.assertEqual(args[1], "zot:5000")
+        self.assertIs(args[2], self.state)
+        self.assertEqual(args[3].upstream_image, "docker.io/library/nginx")
+        self.assertEqual(args[4], "latest")
+        self.assertEqual(args[5], "sha256:abc")
 
-    def test_exact_tag_served_from_upstream_without_listing_upstream(self):
+    def test_partial_tag_is_served_literal_not_resolved(self):
         service = self.service({})
-        with mock.patch("zqp.skopeo.list_tags") as list_tags, \
+        with mock.patch("zqp.skopeo.inspect_digest", return_value="sha256:abc"), \
              mock.patch("app.service._spawn", side_effect=lambda fn: fn()), \
-             mock.patch("zqp.quarantine.copy_to_quarantine") as copy_call:
-            target = service.locate(self.ref("1.27.4"))
-        self.assertEqual((target.source, target.reference), (ServeSource.UPSTREAM, "1.27.4"))
-        list_tags.assert_not_called()
-        self.assertEqual(copy_call.call_args.args[3], "1.27.4")
+             mock.patch("zqp.quarantine.ensure_quarantined"):
+            target = service.locate(self.ref("1.27"))
+        self.assertEqual((target.source, target.reference), (ServeSource.UPSTREAM, "1.27"))
 
-    def test_partial_tag_without_match_is_not_found(self):
-        service = self.service({})
-        with mock.patch("zqp.skopeo.list_tags", return_value=["2.1.0"]):
-            with self.assertRaises(ImageNotFound):
-                service.locate(self.ref("1.27"))
+    def test_verified_digest_is_not_re_quarantined(self):
+        service = self.service(
+            {}, digests={"verified/docker.io/library/nginx": {"latest": "sha256:abc"}}
+        )
+        with mock.patch("zqp.skopeo.inspect_digest", return_value="sha256:abc") as inspect, \
+             mock.patch("app.service._spawn", side_effect=lambda fn: fn()), \
+             mock.patch("zqp.quarantine.ensure_quarantined") as ensure:
+            target = service.locate(self.ref("latest"))
+        self.assertEqual((target.source, target.reference), (ServeSource.UPSTREAM, "latest"))
+        inspect.assert_called_once()
+        ensure.assert_not_called()
 
     def test_digest_served_from_verified_when_present(self):
         digest = "sha256:abc"
         service = self.service(
-            {}, digests={"verified/docker.io/library/nginx": {digest}}
+            {}, digests={"verified/docker.io/library/nginx": {digest: digest}}
         )
         target = service.locate(self.ref(digest))
         self.assertEqual((target.source, target.reference), (ServeSource.VERIFIED, digest))
@@ -112,7 +139,7 @@ class ImageServiceTests(unittest.TestCase):
 
     def test_quarantine_copy_is_deduplicated_while_in_flight(self):
         service = self.service({})
-        with mock.patch("zqp.skopeo.list_tags", return_value=["2.1.0"]), \
+        with mock.patch("zqp.skopeo.inspect_digest", return_value="sha256:abc"), \
              mock.patch("app.service._spawn") as spawn:
             service.locate(self.ref("latest"))
             service.locate(self.ref("latest"))
@@ -124,6 +151,32 @@ class ImageServiceTests(unittest.TestCase):
         repo = RepoName("evil.example.com", "app")
         with self.assertRaises(UpstreamNotAllowed):
             service.locate(ImageRef(repo, "latest"))
+
+    def test_fast_track_promotes_when_malware_clean(self):
+        service = self.service({}, malware=FakeMalware(MalwareVerdict.CLEAN))
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "latest", 100)
+        with mock.patch("zqp.quarantine.promote_to_verified") as promote, \
+             mock.patch("zqp.quarantine.remove_from_quarantine") as remove:
+            service._fast_track(self.ref("latest").repo, "sha256:abc")
+        promote.assert_called_once()
+        remove.assert_not_called()
+
+    def test_fast_track_deletes_when_malware_infected(self):
+        service = self.service({}, malware=FakeMalware(MalwareVerdict.INFECTED, ("/x", "/y")))
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "latest", 100)
+        with mock.patch("zqp.quarantine.promote_to_verified") as promote, \
+             mock.patch("zqp.quarantine.remove_from_quarantine") as remove:
+            service._fast_track(self.ref("latest").repo, "sha256:abc")
+        promote.assert_not_called()
+        remove.assert_called_once()
+
+    def test_fast_track_does_nothing_when_malware_pending(self):
+        service = self.service({}, malware=FakeMalware(MalwareVerdict.PENDING))
+        with mock.patch("zqp.quarantine.promote_to_verified") as promote, \
+             mock.patch("zqp.quarantine.remove_from_quarantine") as remove:
+            service._fast_track(self.ref("latest").repo, "sha256:abc")
+        promote.assert_not_called()
+        remove.assert_not_called()
 
 
 if __name__ == "__main__":

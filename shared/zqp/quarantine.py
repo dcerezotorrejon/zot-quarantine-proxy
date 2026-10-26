@@ -1,4 +1,4 @@
-"""Inserción de imágenes en la cuarentena de Zot (usada por proxy y updater)."""
+"""Gestión de la cuarentena de Zot: copia de digests y limpieza (usada por proxy y updater)."""
 
 from __future__ import annotations
 
@@ -6,43 +6,79 @@ import logging
 import time
 
 from . import skopeo
-from .image_ref import QUARANTINE, RepoName, zot_reference
+from .image_ref import QUARANTINE, VERIFIED, RepoName, digest_to_tag, zot_reference
 from .state import StateStore
 from .zot_api import ZotApi
 
 logger = logging.getLogger(__name__)
 
 
-def copy_to_quarantine(registry_host: str, state: StateStore, repo: RepoName, tag: str) -> None:
-    """Descarga un tag del registro upstream a ``quarantine/`` y lo registra en el estado.
+def ensure_quarantined(
+    zot: ZotApi,
+    registry_host: str,
+    state: StateStore,
+    repo: RepoName,
+    reference: str,
+    digest: str,
+    now: int | None = None,
+) -> None:
+    """Asegura que un digest esté en cuarentena y registrado bajo una referencia.
+
+    El digest se guarda en ``quarantine/`` bajo un tag derivado de él mismo
+    (``sha256-<hex>``), para que cada digest tenga su propio reloj. Si el digest
+    ya está en Zot, solo se registra el estado; si no, se copia del upstream.
 
     Args:
-        registry_host: Host y puerto de Zot, p. ej. ``zot:5000``.
-        state: Base de datos de estado donde se anota la entrada.
+        zot: Cliente de la API de Zot.
+        registry_host: Host y puerto de Zot para skopeo.
+        state: Base de datos de estado.
         repo: Repositorio upstream.
-        tag: Tag concreto a descargar.
+        reference: Tag de cliente que motiva la cuarentena.
+        digest: Digest del manifest a cuarentenar.
+        now: Instante de entrada, en segundos epoch. Por defecto, ahora.
 
     Raises:
         SkopeoError: Si la copia falla. En ese caso no se registra nada.
     """
-    source = f"{repo.upstream_image}:{tag}"
-    destination = zot_reference(registry_host, repo.physical(QUARANTINE), tag)
-    logger.info("Descargando %s a cuarentena", source)
-    skopeo.copy(source, destination)
-    state.add_quarantine(repo.registry, repo.path, tag, int(time.time()))
+    tag = digest_to_tag(digest)
+    if zot.get_digest(repo.physical(QUARANTINE), tag) is None:
+        source = f"{repo.upstream_image}:{reference}"
+        destination = zot_reference(registry_host, repo.physical(QUARANTINE), tag)
+        logger.info("Descargando %s a cuarentena (digest %s)", source, digest)
+        skopeo.copy(source, destination)
+    state.add_quarantine(repo.registry, repo.path, digest, reference, now or int(time.time()))
 
 
-def remove_from_quarantine(zot: ZotApi, state: StateStore, repo: RepoName, tag: str) -> None:
-    """Borra un tag de ``quarantine/`` en Zot y lo quita del registro de cuarentena.
+def remove_from_quarantine(zot: ZotApi, state: StateStore, repo: RepoName, digest: str) -> None:
+    """Borra un digest de la cuarentena: su manifest en Zot y sus filas de estado.
 
     Args:
         zot: Cliente de la API de Zot.
         state: Base de datos de estado.
         repo: Repositorio upstream.
-        tag: Tag a eliminar de la cuarentena.
+        digest: Digest del manifest a eliminar.
     """
-    quarantine_repo = repo.physical(QUARANTINE)
-    digest = zot.get_digest(quarantine_repo, tag)
-    if digest is not None:
-        zot.delete_manifest(quarantine_repo, digest)
-    state.remove_quarantine(repo.registry, repo.path, tag)
+    zot.delete_manifest(repo.physical(QUARANTINE), digest)
+    state.remove_quarantine(repo.registry, repo.path, digest)
+
+
+def promote_to_verified(
+    zot: ZotApi, registry_host: str, state: StateStore, repo: RepoName, digest: str
+) -> None:
+    """Copia un digest de cuarentena a ``verified`` bajo cada ref y lo quita de cuarentena.
+
+    Args:
+        zot: Cliente de la API de Zot.
+        registry_host: Host y puerto de Zot para skopeo.
+        state: Base de datos de estado.
+        repo: Repositorio upstream.
+        digest: Digest del manifest a promover.
+    """
+    references = state.quarantine_refs(repo.registry, repo.path, digest)
+    tag = digest_to_tag(digest)
+    for reference in references:
+        skopeo.copy(
+            zot_reference(registry_host, repo.physical(QUARANTINE), tag),
+            zot_reference(registry_host, repo.physical(VERIFIED), reference),
+        )
+    remove_from_quarantine(zot, state, repo, digest)

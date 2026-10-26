@@ -3,11 +3,14 @@
     PYTHONPATH=shared python -m unittest discover -s tests -v
 """
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from zqp.env import registry_host
-from zqp.image_ref import RepoName
-from zqp.versions import TagKind, alias_targets, parse_tag, pick_tag, tags_to_keep
+from zqp.image_ref import RepoName, digest_to_tag
+from zqp.malware import _parse_infected, format_infected
+from zqp.state import StateStore
 
 
 class RepoNameTests(unittest.TestCase):
@@ -38,57 +41,90 @@ class RepoNameTests(unittest.TestCase):
                 RepoName.from_name(name)
 
 
-class TagClassificationTests(unittest.TestCase):
-    def test_kinds(self):
-        self.assertIs(parse_tag("latest").kind, TagKind.FLOATING)
-        self.assertIs(parse_tag("stable").kind, TagKind.FLOATING)
-        self.assertIs(parse_tag("1").kind, TagKind.PARTIAL)
-        self.assertIs(parse_tag("1.27").kind, TagKind.PARTIAL)
-        self.assertIs(parse_tag("1.27.4").kind, TagKind.EXACT)
-        self.assertIs(parse_tag("1.27.4-alpine").kind, TagKind.EXACT)
-        self.assertIs(parse_tag("alpine").kind, TagKind.EXACT)
+class DigestToTagTests(unittest.TestCase):
+    def test_replaces_colon_with_dash(self):
+        self.assertEqual(digest_to_tag("sha256:abc123"), "sha256-abc123")
+
+    def test_only_first_colon(self):
+        self.assertEqual(digest_to_tag("sha256:ab:cd"), "sha256-ab:cd")
 
 
-class PickTagTests(unittest.TestCase):
-    TAGS = ["1.26.9", "1.27.3", "1.27.4", "1.27.4-alpine", "2.0.0", "2.1.0", "alpine", "latest"]
+class StateStoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.state = StateStore(Path(self._tmp.name) / "state.sqlite3")
 
-    def test_partial_minor_picks_highest_patch(self):
-        self.assertEqual(pick_tag(parse_tag("1.27"), self.TAGS), "1.27.4")
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
 
-    def test_partial_major_picks_highest_minor(self):
-        self.assertEqual(pick_tag(parse_tag("1"), self.TAGS), "1.27.4")
+    def test_add_quarantine_records_digest_and_reference(self):
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "latest", 100)
+        records = self.state.list_quarantine()
+        self.assertEqual(len(records), 1)
+        self.assertEqual((records[0].registry, records[0].path, records[0].digest), ("docker.io", "library/nginx", "sha256:abc"))
+        self.assertEqual(self.state.quarantine_refs("docker.io", "library/nginx", "sha256:abc"), ["latest"])
 
-    def test_partial_ignores_suffixed_variants(self):
-        self.assertNotEqual(pick_tag(parse_tag("1.27"), ["1.27.4-alpine"]), "1.27.4-alpine")
+    def test_add_quarantine_keeps_first_timestamp_for_same_digest(self):
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "latest", 100)
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "2.16.0", 300)
+        records = self.state.list_quarantine()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].quarantined_at, 100)
+        self.assertEqual(
+            self.state.quarantine_refs("docker.io", "library/nginx", "sha256:abc"),
+            ["2.16.0", "latest"],
+        )
 
-    def test_floating_picks_highest_overall(self):
-        self.assertEqual(pick_tag(parse_tag("latest"), self.TAGS), "2.1.0")
+    def test_distinct_digests_are_distinct_records(self):
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:aaa", "latest", 100)
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:bbb", "latest", 200)
+        self.assertEqual(len(self.state.list_quarantine()), 2)
 
-    def test_floating_falls_back_to_literal_without_semver(self):
-        self.assertEqual(pick_tag(parse_tag("latest"), ["latest", "alpine"]), "latest")
+    def test_quarantine_refs_by_repo_groups(self):
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "latest", 100)
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "2.16.0", 100)
+        self.state.add_quarantine("docker.io", "other/app", "sha256:xyz", "v1", 100)
+        grouped = self.state.quarantine_refs_by_repo()
+        self.assertEqual(
+            sorted(grouped[("docker.io", "library/nginx")]),
+            [("sha256:abc", "2.16.0"), ("sha256:abc", "latest")],
+        )
+        self.assertEqual(grouped[("docker.io", "other/app")], [("sha256:xyz", "v1")])
 
-    def test_exact_only_when_present(self):
-        self.assertEqual(pick_tag(parse_tag("1.27.3"), self.TAGS), "1.27.3")
-        self.assertIsNone(pick_tag(parse_tag("1.27.99"), self.TAGS))
+    def test_remove_quarantine_ref_keeps_digest_when_other_ref_remains(self):
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "latest", 100)
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "2.16.0", 100)
+        self.state.remove_quarantine_ref("docker.io", "library/nginx", "sha256:abc", "latest")
+        self.assertEqual(self.state.quarantine_refs("docker.io", "library/nginx", "sha256:abc"), ["2.16.0"])
+        self.assertEqual(len(self.state.list_quarantine()), 1)
 
-    def test_no_match_returns_none(self):
-        self.assertIsNone(pick_tag(parse_tag("3"), self.TAGS))
+    def test_remove_quarantine_removes_digest_and_refs(self):
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "latest", 100)
+        self.state.remove_quarantine("docker.io", "library/nginx", "sha256:abc")
+        self.assertEqual(self.state.list_quarantine(), [])
+        self.assertEqual(self.state.quarantine_refs("docker.io", "library/nginx", "sha256:abc"), [])
+
+    def test_delete_repo_removes_refs_and_quarantine(self):
+        self.state.upsert_ref("docker.io", "library/nginx", "latest")
+        self.state.add_quarantine("docker.io", "library/nginx", "sha256:abc", "latest", 100)
+        self.state.delete_repo("docker.io", "library/nginx")
+        self.assertEqual(self.state.refs_by_repo(), {})
+        self.assertEqual(self.state.list_quarantine(), [])
+        self.assertEqual(self.state.quarantine_refs_by_repo(), {})
 
 
-class RetentionTests(unittest.TestCase):
-    def test_keeps_one_version_per_requested_partial_and_floating(self):
-        tags = ["1.26.9", "1.27.3", "1.27.4", "2.0.0", "2.1.0"]
-        specs = [parse_tag("1.27"), parse_tag("2"), parse_tag("latest")]
-        self.assertEqual(tags_to_keep(tags, specs), {"1.27.4", "2.1.0"})
+class MalwareFormatTests(unittest.TestCase):
+    def test_parse_infected_extracts_paths(self):
+        stdout = "/a/x: Eicar-Signature FOUND\n/b/y: Trojan.Something FOUND\n"
+        self.assertEqual(_parse_infected(stdout), ("/a/x", "/b/y"))
 
-    def test_exact_request_is_always_kept(self):
-        tags = ["1.27.3", "1.27.4"]
-        self.assertEqual(tags_to_keep(tags, [parse_tag("1.27.3")]), {"1.27.3"})
+    def test_parse_infected_ignores_non_found_lines(self):
+        self.assertEqual(_parse_infected("/clean: OK\n/summary\n"), ())
 
-    def test_alias_targets_skip_exact_and_literals(self):
-        tags = ["1.27.4", "2.1.0"]
-        specs = [parse_tag("latest"), parse_tag("1.27"), parse_tag("1.27.4")]
-        self.assertEqual(alias_targets(tags, specs), {"latest": "2.1.0", "1.27": "1.27.4"})
+    def test_format_infected_limits_shown_paths(self):
+        files = tuple(f"/f{i}" for i in range(25))
+        self.assertIn("(+5 más)", format_infected(files))
+        self.assertNotIn("/f24", format_infected(files).split(" (+")[0])
 
 
 class RegistryHostTests(unittest.TestCase):

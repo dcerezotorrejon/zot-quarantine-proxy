@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from zqp.image_ref import QUARANTINE, VERIFIED, RepoName
+from zqp.image_ref import QUARANTINE, VERIFIED, RepoName, digest_to_tag
 from zqp.state import StateStore
-from zqp.versions import parse_tag, pick_tag
 from zqp.zot_api import ZotApi
 
 logger = logging.getLogger(__name__)
@@ -17,7 +16,7 @@ class StateCleaner:
 
     Un paquete sin imágenes en ``verified`` ni ``quarantine`` se borra entero del
     estado. Si el paquete aún tiene imágenes, se quitan las entradas de cuarentena
-    y las refs cuyo tag ya no existe en Zot.
+    cuyo digest ya no está en Zot y las refs que no apuntan a ningún tag existente.
     """
 
     def __init__(self, state: StateStore, zot: ZotApi) -> None:
@@ -38,38 +37,55 @@ class StateCleaner:
             quarantined = self._zot.list_tags(repo.physical(QUARANTINE))
             if not verified and not quarantined:
                 self._state.delete_repo(registry, path)
-                logger.info("Paquete %s eliminado de la base de datos: sin imágenes", repo.upstream_image)
+                logger.info(
+                    "Paquete %s eliminado de la base de datos: sin imágenes",
+                    repo.upstream_image,
+                )
                 continue
             self._prune_quarantine(repo, quarantined)
-            self._prune_refs(repo, references, [*verified, *quarantined])
+            self._prune_refs(repo, references, verified, quarantined)
 
-    def _prune_quarantine(self, repo: RepoName, quarantined: list[str]) -> None:
-        """Quita del estado las entradas de cuarentena cuyo tag ya no está en Zot.
+    def _prune_quarantine(self, repo: RepoName, quarantined_tags: list[str]) -> None:
+        """Quita del estado las entradas de cuarentena cuyo digest ya no está en Zot.
 
         Args:
             repo: Repositorio upstream.
-            quarantined: Tags que Zot tiene actualmente en ``quarantine``.
+            quarantined_tags: Tags ``sha256-<hex>`` que Zot tiene en ``quarantine``.
         """
+        present = set(quarantined_tags)
         for record in self._state.list_quarantine():
             if (record.registry, record.path) != (repo.registry, repo.path):
                 continue
-            if record.tag not in quarantined:
-                self._state.remove_quarantine(repo.registry, repo.path, record.tag)
+            if digest_to_tag(record.digest) not in present:
+                self._state.remove_quarantine(repo.registry, repo.path, record.digest)
                 logger.info(
-                    "Quitada de la base de datos la cuarentena de %s:%s",
+                    "Quitada de la base de datos la cuarentena de %s@%s",
                     repo.upstream_image,
-                    record.tag,
+                    record.digest,
                 )
 
-    def _prune_refs(self, repo: RepoName, references: list[str], tags: list[str]) -> None:
-        """Quita del estado las refs que ya no cumplen ningún tag de Zot.
+    def _prune_refs(
+        self,
+        repo: RepoName,
+        references: list[str],
+        verified: list[str],
+        quarantined_tags: list[str],
+    ) -> None:
+        """Quita del estado las refs que no apuntan a ningún tag existente en Zot.
 
         Args:
             repo: Repositorio upstream.
             references: Tags pedidos por los clientes para ese repositorio.
-            tags: Tags que Zot tiene actualmente en ``verified`` y ``quarantine``.
+            verified: Tags que Zot tiene actualmente en ``verified``.
+            quarantined_tags: Tags ``sha256-<hex>`` que Zot tiene en ``quarantine``.
         """
+        active = set(verified)
+        quarantine_tags = set(quarantined_tags)
+        pairs = self._state.quarantine_refs_by_repo().get((repo.registry, repo.path), [])
+        for digest, reference in pairs:
+            if digest_to_tag(digest) in quarantine_tags:
+                active.add(reference)
         for reference in references:
-            if pick_tag(parse_tag(reference), tags) is None:
+            if reference not in active:
                 self._state.delete_ref(repo.registry, repo.path, reference)
                 logger.info("Quitada de la base de datos la ref %s:%s", repo.upstream_image, reference)

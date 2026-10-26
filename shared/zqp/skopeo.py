@@ -1,8 +1,7 @@
-"""Envoltorio mínimo sobre la CLI `skopeo`: copias entre registros y listado de tags."""
+"""Envoltorio mínimo sobre la CLI `skopeo`: copias entre registros e inspección de digests."""
 
 from __future__ import annotations
 
-import json
 import subprocess
 
 from .env import env_str
@@ -18,9 +17,11 @@ class SkopeoError(RuntimeError):
 def copy(source: str, destination: str) -> None:
     """Copia una imagen al destino.
 
-    Por defecto copia solo la plataforma del sistema (``--multi-arch system``),
-    para no almacenar ni escanear arquitecturas que no se usan. Se puede cambiar
-    con la variable ``SKOPEO_MULTI_ARCH`` (``system``, ``all`` o ``index-only``).
+    Por defecto copia todas las arquitecturas (``--multi-arch all``), para que el
+    digest del índice que devuelve ``inspect_digest`` coincida con lo que queda
+    almacenado en Zot. Se puede cambiar con la variable ``SKOPEO_MULTI_ARCH``,
+    pero solo se recomienda ``all``: ``system`` o ``index-only`` rompen la
+    correlación entre el digest inspeccionado y el almacenado.
 
     Args:
         source: Referencia de origen sin ``docker://``, p. ej. ``docker.io/library/nginx:1.27``.
@@ -29,30 +30,54 @@ def copy(source: str, destination: str) -> None:
     Raises:
         SkopeoError: Si skopeo falla o supera el tiempo límite.
     """
-    multi_arch = env_str("SKOPEO_MULTI_ARCH", "system")
+    multi_arch = env_str("SKOPEO_MULTI_ARCH", "all")
     _run(
         ["copy", "--multi-arch", multi_arch, f"docker://{source}", f"docker://{destination}"],
         COPY_TIMEOUT_SECONDS,
     )
 
 
-def list_tags(image: str) -> list[str]:
-    """Lista los tags publicados de una imagen en su registro.
+def export_dir(image_with_tag: str, dest_dir: str) -> None:
+    """Exporta una imagen a un directorio en layout OCI, para escanear sus capas.
+
+    Extrae solo la plataforma del sistema (``--multi-arch system``), para que
+    ``umoci`` pueda desempaquetar un manifest único aunque la imagen sea multi-arch.
 
     Args:
-        image: Imagen sin tag, p. ej. ``docker.io/library/nginx``.
-
-    Returns:
-        Lista de tags publicados.
+        image_with_tag: Imagen con tag, p. ej. ``zot:5000/quarantine/...:sha256-...``.
+        dest_dir: Directorio destino. Se crea en él un layout OCI etiquetado ``latest``.
 
     Raises:
-        SkopeoError: Si skopeo falla o la salida no tiene el formato esperado.
+        SkopeoError: Si skopeo falla.
     """
-    output = _run(["list-tags", f"docker://{image}"], LIST_TIMEOUT_SECONDS)
-    try:
-        return list(json.loads(output).get("Tags") or [])
-    except (json.JSONDecodeError, AttributeError) as exc:
-        raise SkopeoError(f"Respuesta inesperada de skopeo list-tags para {image}") from exc
+    _run(
+        ["copy", "--multi-arch", "system", f"docker://{image_with_tag}", f"oci:{dest_dir}:latest"],
+        COPY_TIMEOUT_SECONDS,
+    )
+
+
+def inspect_digest(image_with_tag: str) -> str:
+    """Devuelve el digest del manifest de una imagen con tag.
+
+    Args:
+        image_with_tag: Referencia completa con tag, p. ej.
+            ``docker.io/library/nginx:latest``.
+
+    Returns:
+        Digest ``sha256:...`` del manifest (o del índice, si la imagen es multi-arch).
+
+    Raises:
+        SkopeoError: Si skopeo falla (p. ej. el tag no existe) o la salida no es
+            un digest válido.
+    """
+    output = _run(
+        ["inspect", "--format", "{{.Digest}}", f"docker://{image_with_tag}"],
+        LIST_TIMEOUT_SECONDS,
+    )
+    digest = output.strip()
+    if not digest.startswith("sha256:"):
+        raise SkopeoError(f"Respuesta inesperada de skopeo inspect para {image_with_tag}")
+    return digest
 
 
 def _run(args: list[str], timeout: int) -> str:

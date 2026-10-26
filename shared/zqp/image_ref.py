@@ -112,5 +112,21 @@ def zot_reference(registry_host: str, physical_repo: str, tag: str) -> str:
     return f"{registry_host}/{physical_repo}:{tag}"
 
 
+def digest_to_tag(digest: str) -> str:
+    """Convierte un digest en un tag OCI válido para almacenar en Zot.
+
+    Los tags OCI no admiten ``:``, así que ``sha256:abc…`` pasa a ser
+    ``sha256-abc…``. Se usa para dar a cada digest en cuarentena un tag propio
+    e inmutable.
+
+    Args:
+        digest: Digest del manifest, p. ej. ``sha256:abc…``.
+
+    Returns:
+        Tag derivado, p. ej. ``sha256-abc…``.
+    """
+    return digest.replace(":", "-", 1)
+
+
 def _looks_like_registry(segment: str) -> bool:
     return "." in segment or ":" in segment or segment == "localhost"

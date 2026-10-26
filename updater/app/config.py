@@ -7,7 +7,7 @@ from pathlib import Path
 
 from zqp.env import env_duration_seconds, env_int, env_list, env_str, registry_host
 
-DEFAULT_CVE_SEVERITIES = "HIGH,CRITICAL"
+DEFAULT_CVE_SEVERITIES = ""
 
 
 @dataclass(frozen=True)
@@ -18,6 +18,9 @@ class Settings:
     cve_severities: frozenset[str]
     check_interval_seconds: int
     zli_bin: str
+    umoci_bin: str
+    clamscan_bin: str
+    freshclam_bin: str
     log_level: str
 
     @classmethod
@@ -40,6 +43,9 @@ class Settings:
             ),
             check_interval_seconds=env_duration_seconds("CHECK_INTERVAL", "6h"),
             zli_bin=env_str("ZLI_BIN", "zli"),
+            umoci_bin=env_str("UMOCI_BIN", "umoci"),
+            clamscan_bin=env_str("CLAMSCAN_BIN", "clamscan"),
+            freshclam_bin=env_str("FRESHCLAM_BIN", "freshclam"),
             log_level=env_str("LOG_LEVEL", "INFO").upper(),
         )
 

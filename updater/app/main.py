@@ -6,9 +6,11 @@ import logging
 import time
 from collections.abc import Callable
 
+from zqp.malware import MalwareScanner
 from zqp.state import StateStore
 from zqp.zot_api import ZotApi
 
+from .clamav import ClamavUpdater
 from .cleanup import StateCleaner
 from .config import Settings
 from .promoter import Promoter
@@ -37,12 +39,15 @@ def build_cycle(settings: Settings, zot: ZotApi, state: StateStore) -> list[Step
     """
     host = settings.zot_registry_host
     scanner = CveScanner(settings.zli_bin, settings.zot_url, settings.cve_severities)
-    promoter = Promoter(state, zot, scanner, host, settings.quarantine_days)
+    malware = MalwareScanner(host, settings.umoci_bin, settings.clamscan_bin)
+    clamav = ClamavUpdater(settings.freshclam_bin)
+    promoter = Promoter(state, zot, scanner, malware, host, settings.quarantine_days)
     return [
         ("limpieza de estado", StateCleaner(state, zot).run),
         ("sincronizar upstream", UpstreamSync(state, zot, host).run),
+        ("actualizar firmas ClamAV", clamav.run),
         ("promover desde cuarentena", promoter.run),
-        ("alias y retención", Retention(state, zot, host).run),
+        ("retención", Retention(state, zot, host).run),
     ]
 
 
