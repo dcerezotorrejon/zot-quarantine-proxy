@@ -8,7 +8,7 @@
     "gcInterval": "24h"
   },
   "http": {
-    "address": "0.0.0.0",
+    "address": "[::]",
     "port": "5000",
     "compat": ["docker2s2"]
   },

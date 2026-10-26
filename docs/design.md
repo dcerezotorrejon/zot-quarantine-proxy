@@ -19,7 +19,7 @@ Se despliega con Podman rootless y quadlets.
 | Namespaces | Dos namespaces en un único Zot: `verified` y `quarantine`. |
 | Topología | Pod `zot-quarantine-proxy` con los tres contenedores. Nombres resolubles con `AddHost` (ver §3). |
 | Despliegue | Podman rootless + quadlets (systemd de usuario) en Fedora. Compose solo para desarrollo. |
-| Puertos | Proxy `5001` (uso normal) y Zot `5000` (acceso directo). Ambos publicados al host. |
+| Puertos | Proxy `5001` (uso normal) y Zot `5000` (acceso directo). Ambos publicados al host y escuchan en `[::]` (dual-stack IPv4/IPv6). |
 | Multi-arch | Se almacena el índice completo (`--multi-arch all`). El digest de identidad es el del índice; el escaneo de malware extrae solo la plataforma del servidor (`--multi-arch system`). Ver §9. |
 
 ## 3. Topología
@@ -39,7 +39,9 @@ Los contenedores se hablan por nombre (`http://zot:5000`). Dentro de un pod todo
 comparten la misma pila de red, así que los nombres se resuelven con entradas
 `AddHost` en la unidad `.pod`, que apuntan a `127.0.0.1`. Por eso la comunicación
 no sale del pod. Del pod se publican al host los puertos 5001 (proxy) y 5000 (Zot).
-Zot en 5000 deja ver `verified/` y `quarantine/` sin la lógica del proxy, así que
+Zot y el proxy escuchan en `::` (dual-stack): responden tanto por IPv4
+(`127.0.0.1`) como por IPv6 (`::1`). Zot en 5000 deja ver `verified/` y
+`quarantine/` sin la lógica del proxy, así que
 la exposición directa es una decisión deliberada, sin autenticación.
 
 **Limitación.** Los nombres son alias de `127.0.0.1`, no hosts distintos. Dos
@@ -157,7 +159,7 @@ que siguen en cuarentena (p. ej. un tag verificado que movió a otro digest).
 
 `config/zot/config.json` activa `search` con `cve` (Trivy embebido, base de datos
 actualizada cada 24h) y `storage.gc` con `dedupe`. Zot escucha en el puerto 5000
-dentro del pod.
+dentro del pod, enlazado a `[::]` (dual-stack IPv4/IPv6).
 
 Zot no usa la extensión `sync`: el reenvío al registro público lo hace el proxy, y la
 copia a `quarantine` la dispara el proxy con `skopeo` en segundo plano. Zot solo
@@ -186,7 +188,8 @@ cada plataforma.
 
 ```
 shared/zqp/        código común: image_ref, state, env, skopeo, zot_api, quarantine
-proxy/app/         FastAPI: main, service, resolver, forwarder, upstream, config
+proxy/app/         FastAPI: main, service, resolver, forwarder, upstream, config,
+                   server (arranque dual-stack)
 updater/app/       main, upstream_sync, promoter, retention, cleanup,
                    scanner, malware, clamav, config
 config/zot/        config.json de Zot
