@@ -9,7 +9,9 @@ ContainerName=updater
 Pod=zot-quarantine-proxy.pod
 Environment=ZOT_URL=http://zot:5000
 Environment=QUARANTINE_DAYS=7
-Environment=CVE_SEVERITY_THRESHOLD=HIGH,CRITICAL
+# Vacío = no bloquear por CVEs (solo malware en la promoción). Para reactivar:
+#   Environment=CVE_SEVERITY_THRESHOLD=HIGH,CRITICAL
+Environment=CVE_SEVERITY_THRESHOLD=
 Environment=CHECK_INTERVAL=6h
 Environment=LOG_LEVEL=INFO
 Volume=proxy-data:/var/lib/proxy

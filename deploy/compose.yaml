@@ -7,7 +7,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./config/zot/config.json:/etc/zot/config.json:ro
+      - ./config/zot/config.json:/etc/zot/config.json:ro,Z
       - zot-data:/var/lib/zot
 
   proxy:
@@ -37,7 +37,7 @@ services:
     environment:
       ZOT_URL: http://zot:5000
       QUARANTINE_DAYS: "7"
-      CVE_SEVERITY_THRESHOLD: HIGH,CRITICAL
+      CVE_SEVERITY_THRESHOLD: ""
       CHECK_INTERVAL: 6h
       LOG_LEVEL: INFO
     volumes:

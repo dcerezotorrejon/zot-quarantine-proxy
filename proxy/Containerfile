@@ -2,7 +2,7 @@
 #   podman build -t localhost/zot-proxy:latest -f proxy/Containerfile .
 FROM registry.fedoraproject.org/fedora-minimal:latest
 
-RUN microdnf install -y python3 python3-pip skopeo \
+RUN microdnf install -y python3 python3-pip skopeo clamav clamav-data umoci \
  && microdnf clean all \
  && python3 -m venv /opt/venv
 
@@ -21,4 +21,4 @@ COPY shared/zqp /srv/zqp
 COPY proxy/app /srv/app
 
 EXPOSE 5001
-CMD ["uvicorn", "app.main:app", "--host", "::", "--port", "5001"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5001"]

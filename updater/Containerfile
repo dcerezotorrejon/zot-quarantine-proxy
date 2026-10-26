@@ -4,7 +4,7 @@ FROM registry.fedoraproject.org/fedora-minimal:latest
 
 ARG ZOT_VERSION=v2.1.22
 
-RUN microdnf install -y python3 python3-pip skopeo curl \
+RUN microdnf install -y python3 python3-pip skopeo curl clamav clamav-data clamav-freshclam umoci \
  && curl -fsSL -o /usr/local/bin/zli \
       "https://github.com/project-zot/zot/releases/download/${ZOT_VERSION}/zli-linux-amd64" \
  && chmod 0755 /usr/local/bin/zli \
